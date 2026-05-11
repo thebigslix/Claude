@@ -31,7 +31,6 @@ export default function LoginScreen() {
     try {
       let worker = await findWorkerByNameAndPin(name.trim(), pin.trim());
       if (!worker) {
-        // New worker — create account
         worker = {
           id: `worker-${Date.now()}`,
           name: name.trim(),
@@ -50,7 +49,7 @@ export default function LoginScreen() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#2563EB" />
+        <ActivityIndicator size="large" color="#3B82F6" />
       </View>
     );
   }
@@ -60,44 +59,61 @@ export default function LoginScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.card}>
-        <Text style={styles.logo}>📍</Text>
-        <Text style={styles.title}>StreetTracker</Text>
-        <Text style={styles.subtitle}>Enter your name and PIN to start</Text>
+      <View style={styles.inner}>
+        <View style={styles.logoWrap}>
+          <View style={styles.logoIcon}>
+            <Text style={styles.logoEmoji}>📍</Text>
+          </View>
+          <Text style={styles.appName}>FieldTrack</Text>
+          <Text style={styles.tagline}>Street coverage, simplified</Text>
+        </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Your name"
-          value={name}
-          onChangeText={setName}
-          autoCapitalize="words"
-          returnKeyType="next"
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="PIN (4 digits)"
-          value={pin}
-          onChangeText={setPin}
-          keyboardType="number-pad"
-          maxLength={6}
-          secureTextEntry
-          returnKeyType="done"
-          onSubmitEditing={handleLogin}
-        />
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Sign In</Text>
 
-        <TouchableOpacity
-          style={[styles.button, submitting && styles.buttonDisabled]}
-          onPress={handleLogin}
-          disabled={submitting}
-        >
-          {submitting
-            ? <ActivityIndicator color="#fff" />
-            : <Text style={styles.buttonText}>Sign In</Text>
-          }
-        </TouchableOpacity>
+          <Text style={styles.label}>Name</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Your name"
+            placeholderTextColor="#475569"
+            value={name}
+            onChangeText={setName}
+            autoCapitalize="words"
+            returnKeyType="next"
+            selectionColor="#3B82F6"
+          />
+
+          <Text style={styles.label}>PIN</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="4-digit PIN"
+            placeholderTextColor="#475569"
+            value={pin}
+            onChangeText={setPin}
+            keyboardType="number-pad"
+            maxLength={6}
+            secureTextEntry
+            returnKeyType="done"
+            onSubmitEditing={handleLogin}
+            selectionColor="#3B82F6"
+          />
+
+          <TouchableOpacity
+            style={[styles.button, submitting && styles.buttonDisabled]}
+            onPress={handleLogin}
+            disabled={submitting}
+            activeOpacity={0.85}
+          >
+            {submitting
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={styles.buttonText}>Sign In</Text>
+            }
+          </TouchableOpacity>
+        </View>
 
         <Text style={styles.hint}>
-          Manager PIN is 0000 — workers can create their own PIN on first login
+          Manager: name <Text style={styles.hintBold}>Manager</Text> · PIN <Text style={styles.hintBold}>0000</Text>{'\n'}
+          New workers are created automatically on first sign in
         </Text>
       </View>
     </KeyboardAvoidingView>
@@ -105,45 +121,38 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  container: {
-    flex: 1,
-    backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
-    padding: 24,
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F172A' },
+  container: { flex: 1, backgroundColor: '#0F172A' },
+  inner: { flex: 1, justifyContent: 'center', padding: 24 },
+  logoWrap: { alignItems: 'center', marginBottom: 36 },
+  logoIcon: {
+    width: 72, height: 72, borderRadius: 20,
+    backgroundColor: '#1E3A5F',
+    justifyContent: 'center', alignItems: 'center',
+    marginBottom: 14,
+    borderWidth: 1, borderColor: '#2563EB',
   },
+  logoEmoji: { fontSize: 36 },
+  appName: { fontSize: 32, fontWeight: '800', color: '#F1F5F9', letterSpacing: -0.5 },
+  tagline: { fontSize: 14, color: '#64748B', marginTop: 4 },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 28,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    backgroundColor: '#1E293B',
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  logo: { fontSize: 48, textAlign: 'center', marginBottom: 8 },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#1E293B',
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#64748B',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
+  cardTitle: { fontSize: 20, fontWeight: '700', color: '#F1F5F9', marginBottom: 20 },
+  label: { fontSize: 12, fontWeight: '600', color: '#64748B', marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' },
   input: {
+    backgroundColor: '#0F172A',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#334155',
     borderRadius: 10,
     padding: 14,
     fontSize: 16,
-    marginBottom: 14,
-    backgroundColor: '#F8FAFC',
+    color: '#F1F5F9',
+    marginBottom: 16,
   },
   button: {
     backgroundColor: '#2563EB',
@@ -152,13 +161,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 4,
   },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  hint: {
-    marginTop: 20,
-    fontSize: 12,
-    color: '#94A3B8',
-    textAlign: 'center',
-    lineHeight: 18,
-  },
+  buttonDisabled: { opacity: 0.5 },
+  buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  hint: { marginTop: 24, fontSize: 12, color: '#475569', textAlign: 'center', lineHeight: 20 },
+  hintBold: { color: '#64748B', fontWeight: '700' },
 });
