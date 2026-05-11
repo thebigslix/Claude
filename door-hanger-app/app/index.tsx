@@ -4,7 +4,7 @@ import {
   StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
-import { getCurrentWorker, findWorkerByNameAndPin, saveCurrentWorker, saveWorker } from '../lib/storage';
+import { getCurrentWorker, findWorkerByNameAndPin, saveCurrentWorker, saveWorker } from '../lib/db';
 
 export default function LoginScreen() {
   const [name, setName] = useState('');

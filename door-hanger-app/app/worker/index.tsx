@@ -15,7 +15,7 @@ import {
   getActiveShift, startShift, endShift, clearCurrentWorker,
   getYardSigns, saveYardSign, deleteYardSign,
   Zone, Street, Worker, Completion, ShiftSession, YardSign,
-} from '../../lib/storage';
+} from '../../lib/db';
 import { reverseGeocodeStreet } from '../../lib/overpass';
 import StreetMap from '../../components/StreetMap';
 

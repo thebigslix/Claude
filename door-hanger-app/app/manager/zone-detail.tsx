@@ -4,7 +4,7 @@ import {
   ActivityIndicator, SafeAreaView,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { getZones, getStreets, getCompletions, getYardSigns, getShifts, Zone, Street, Completion, YardSign, ShiftSession } from '../../lib/storage';
+import { getZones, getStreets, getCompletions, getYardSigns, getShifts, Zone, Street, Completion, YardSign, ShiftSession } from '../../lib/db';
 
 export default function ZoneDetailScreen() {
   const { zoneId } = useLocalSearchParams<{ zoneId: string }>();

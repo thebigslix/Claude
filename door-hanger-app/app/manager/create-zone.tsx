@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
-import { saveZone, saveStreets } from '../../lib/storage';
+import { saveZone, saveStreets } from '../../lib/db';
 import { fetchStreetsInRadius } from '../../lib/overpass';
 import ZonePicker from '../../components/ZonePicker';
 

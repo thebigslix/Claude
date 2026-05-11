@@ -7,7 +7,7 @@ import { router, useFocusEffect } from 'expo-router';
 import {
   getCurrentWorker, getZones, getStreets, getCompletions,
   deleteZone, clearCurrentWorker, Zone,
-} from '../../lib/storage';
+} from '../../lib/db';
 
 type ZoneStats = { zone: Zone; total: number; done: number };
 
