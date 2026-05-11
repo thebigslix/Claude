@@ -1,5 +1,4 @@
-import { useEffect, useRef } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
 import { Street, Completion } from '../../lib/storage';
 
@@ -48,7 +47,7 @@ export default function StreetMap({
 
       {userLat != null && userLng != null && (
         <Marker coordinate={{ latitude: userLat, longitude: userLng }} anchor={{ x: 0.5, y: 0.5 }}>
-          <div style={{
+          <View style={{
             width: 18, height: 18,
             backgroundColor: '#2563EB',
             borderRadius: 9,
