@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator, SafeAreaView,
+  Alert, ActivityIndicator, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import { saveZone, saveStreets } from '../../lib/storage';
 import { fetchStreetsInRadius } from '../../lib/overpass';
+import ZonePicker from '../../components/ZonePicker';
 
 const RADIUS_OPTIONS = [
   { label: '0.5 km', value: 500 },
@@ -15,10 +16,15 @@ const RADIUS_OPTIONS = [
   { label: '5 km', value: 5000 },
 ];
 
+// Default center (San Jose, CA — will be replaced by user's location or tap)
+const DEFAULT_LAT = 37.3382;
+const DEFAULT_LNG = -121.8863;
+
 export default function CreateZoneScreen() {
   const [name, setName] = useState('');
-  const [lat, setLat] = useState('');
-  const [lng, setLng] = useState('');
+  const [lat, setLat] = useState(DEFAULT_LAT);
+  const [lng, setLng] = useState(DEFAULT_LNG);
+  const [hasSetLocation, setHasSetLocation] = useState(false);
   const [radius, setRadius] = useState(1000);
   const [detecting, setDetecting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -34,8 +40,10 @@ export default function CreateZoneScreen() {
         return;
       }
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      setLat(String(loc.coords.latitude));
-      setLng(String(loc.coords.longitude));
+      setLat(loc.coords.latitude);
+      setLng(loc.coords.longitude);
+      setHasSetLocation(true);
+      setStreetCount(null);
     } catch {
       Alert.alert('Error', 'Could not get location.');
     } finally {
@@ -43,15 +51,22 @@ export default function CreateZoneScreen() {
     }
   }
 
+  function handleMapMove(newLat: number, newLng: number) {
+    setLat(newLat);
+    setLng(newLng);
+    setHasSetLocation(true);
+    setStreetCount(null);
+  }
+
   async function previewStreets() {
-    if (!lat || !lng) {
-      Alert.alert('Set center first', 'Enter coordinates or use "My Location".');
+    if (!hasSetLocation) {
+      Alert.alert('Set a location first', 'Tap on the map or use "My Location" to set the zone center.');
       return;
     }
     setFetching(true);
     setStreetCount(null);
     try {
-      const streets = await fetchStreetsInRadius(parseFloat(lat), parseFloat(lng), radius, 'preview');
+      const streets = await fetchStreetsInRadius(lat, lng, radius, 'preview');
       setStreetCount(streets.length);
     } catch {
       Alert.alert('Error', 'Could not load streets. Check your connection.');
@@ -62,7 +77,7 @@ export default function CreateZoneScreen() {
 
   async function handleCreate() {
     if (!name.trim()) { Alert.alert('Name required', 'Give this zone a name.'); return; }
-    if (!lat || !lng) { Alert.alert('Location required', 'Set a center point.'); return; }
+    if (!hasSetLocation) { Alert.alert('Location required', 'Tap the map or use "My Location".'); return; }
 
     setSaving(true);
     try {
@@ -70,16 +85,16 @@ export default function CreateZoneScreen() {
       const zone = {
         id: zoneId,
         name: name.trim(),
-        centerLat: parseFloat(lat),
-        centerLng: parseFloat(lng),
+        centerLat: lat,
+        centerLng: lng,
         radiusMeters: radius,
         createdAt: new Date().toISOString(),
       };
 
-      const streets = await fetchStreetsInRadius(parseFloat(lat), parseFloat(lng), radius, zoneId);
+      const streets = await fetchStreetsInRadius(lat, lng, radius, zoneId);
 
       if (streets.length === 0) {
-        Alert.alert('No streets found', 'No named streets found in this area. Try a larger radius.');
+        Alert.alert('No streets found', 'No named streets in this area. Try a larger radius or different location.');
         setSaving(false);
         return;
       }
@@ -109,46 +124,50 @@ export default function CreateZoneScreen() {
         <View style={{ width: 60 }} />
       </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView contentContainerStyle={styles.form}>
-          <Text style={styles.label}>Zone Name</Text>
+      {/* Map takes up top half */}
+      <View style={styles.mapContainer}>
+        <ZonePicker
+          lat={lat}
+          lng={lng}
+          radiusMeters={radius}
+          onMove={handleMapMove}
+        />
+        {!hasSetLocation && (
+          <View style={styles.mapOverlay} pointerEvents="none">
+            <View style={styles.mapHint}>
+              <Text style={styles.mapHintText}>Tap the map to place the zone center</Text>
+            </View>
+          </View>
+        )}
+        <TouchableOpacity style={styles.myLocationBtn} onPress={useMyLocation} disabled={detecting}>
+          {detecting
+            ? <ActivityIndicator size="small" color="#3B82F6" />
+            : <Text style={styles.myLocationText}>📍 My Location</Text>
+          }
+        </TouchableOpacity>
+      </View>
+
+      {/* Controls below map */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.controls}>
+
           <TextInput
-            style={styles.input}
-            placeholder="e.g. Maple District North"
+            style={styles.nameInput}
+            placeholder="Zone name (e.g. Maple District)"
+            placeholderTextColor="#475569"
             value={name}
             onChangeText={setName}
             autoCapitalize="words"
+            selectionColor="#3B82F6"
           />
 
-          <Text style={styles.label}>Center Point</Text>
-          <TouchableOpacity style={styles.locationBtn} onPress={useMyLocation} disabled={detecting}>
-            {detecting
-              ? <ActivityIndicator size="small" color="#2563EB" />
-              : <Text style={styles.locationBtnText}>📍 Use My Current Location</Text>
-            }
-          </TouchableOpacity>
+          {hasSetLocation && (
+            <Text style={styles.coordsText}>
+              📌 {lat.toFixed(5)}, {lng.toFixed(5)}
+            </Text>
+          )}
 
-          <View style={styles.coordRow}>
-            <TextInput
-              style={[styles.input, styles.coordInput]}
-              placeholder="Latitude"
-              value={lat}
-              onChangeText={setLat}
-              keyboardType="decimal-pad"
-            />
-            <TextInput
-              style={[styles.input, styles.coordInput]}
-              placeholder="Longitude"
-              value={lng}
-              onChangeText={setLng}
-              keyboardType="decimal-pad"
-            />
-          </View>
-
-          <Text style={styles.label}>Radius</Text>
+          <Text style={styles.sectionLabel}>RADIUS</Text>
           <View style={styles.radiusRow}>
             {RADIUS_OPTIONS.map(opt => (
               <TouchableOpacity
@@ -169,7 +188,7 @@ export default function CreateZoneScreen() {
             disabled={fetching}
           >
             {fetching
-              ? <ActivityIndicator size="small" color="#2563EB" />
+              ? <ActivityIndicator size="small" color="#3B82F6" />
               : <Text style={styles.previewBtnText}>Preview Streets</Text>
             }
           </TouchableOpacity>
@@ -183,19 +202,15 @@ export default function CreateZoneScreen() {
           )}
 
           <TouchableOpacity
-            style={[styles.createBtn, saving && styles.btnDisabled]}
+            style={[styles.createBtn, (saving || !hasSetLocation) && styles.btnDisabled]}
             onPress={handleCreate}
-            disabled={saving}
+            disabled={saving || !hasSetLocation}
           >
             {saving
               ? <ActivityIndicator color="#fff" />
               : <Text style={styles.createBtnText}>Create Zone & Load Streets</Text>
             }
           </TouchableOpacity>
-
-          <Text style={styles.note}>
-            Street data is loaded from OpenStreetMap. Loading may take a few seconds.
-          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -203,53 +218,66 @@ export default function CreateZoneScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F1F5F9' },
+  container: { flex: 1, backgroundColor: '#0F172A' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 16, backgroundColor: '#fff',
-    borderBottomWidth: 1, borderBottomColor: '#E2E8F0',
+    padding: 16, borderBottomWidth: 1, borderBottomColor: '#1E293B',
   },
   backBtn: { width: 60 },
-  backText: { color: '#2563EB', fontSize: 15 },
-  title: { fontSize: 18, fontWeight: '700', color: '#1E293B' },
-  form: { padding: 16, gap: 6 },
-  label: { fontSize: 13, fontWeight: '600', color: '#475569', marginTop: 10, marginBottom: 4 },
-  input: {
-    borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 10,
-    padding: 13, fontSize: 15, backgroundColor: '#fff', marginBottom: 4,
+  backText: { color: '#3B82F6', fontSize: 15 },
+  title: { fontSize: 18, fontWeight: '700', color: '#F1F5F9' },
+
+  mapContainer: { height: 280, position: 'relative' },
+  mapOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center', alignItems: 'center',
+    pointerEvents: 'none',
+  } as any,
+  mapHint: {
+    backgroundColor: 'rgba(15,23,42,0.85)',
+    paddingHorizontal: 16, paddingVertical: 8,
+    borderRadius: 20, borderWidth: 1, borderColor: '#334155',
   },
-  locationBtn: {
-    borderWidth: 1.5, borderColor: '#2563EB', borderRadius: 10,
-    padding: 13, alignItems: 'center', backgroundColor: '#EFF6FF', marginBottom: 8,
+  mapHintText: { color: '#94A3B8', fontSize: 13, fontWeight: '500' },
+  myLocationBtn: {
+    position: 'absolute', bottom: 12, right: 12,
+    backgroundColor: 'rgba(15,23,42,0.9)',
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 20, borderWidth: 1, borderColor: '#334155',
   },
-  locationBtnText: { color: '#2563EB', fontWeight: '600', fontSize: 14 },
-  coordRow: { flexDirection: 'row', gap: 8 },
-  coordInput: { flex: 1 },
-  radiusRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  myLocationText: { color: '#3B82F6', fontSize: 13, fontWeight: '600' },
+
+  controls: { padding: 16, gap: 12 },
+  nameInput: {
+    backgroundColor: '#1E293B', borderWidth: 1.5, borderColor: '#334155',
+    borderRadius: 10, padding: 14, fontSize: 15, color: '#F1F5F9',
+  },
+  coordsText: { fontSize: 12, color: '#475569' },
+  sectionLabel: { fontSize: 11, fontWeight: '700', color: '#475569', letterSpacing: 1, marginTop: 4 },
+  radiusRow: { flexDirection: 'row', gap: 8 },
   radiusChip: {
     flex: 1, padding: 10, borderRadius: 8,
-    borderWidth: 1.5, borderColor: '#E2E8F0',
-    alignItems: 'center', backgroundColor: '#fff',
+    borderWidth: 1.5, borderColor: '#334155',
+    alignItems: 'center', backgroundColor: '#1E293B',
   },
   radiusChipActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
   radiusChipText: { fontWeight: '600', color: '#64748B', fontSize: 13 },
   radiusChipTextActive: { color: '#fff' },
   previewBtn: {
-    borderWidth: 1.5, borderColor: '#2563EB', borderRadius: 10,
-    padding: 13, alignItems: 'center', marginBottom: 8,
+    borderWidth: 1.5, borderColor: '#3B82F6', borderRadius: 10,
+    padding: 13, alignItems: 'center',
   },
-  previewBtnText: { color: '#2563EB', fontWeight: '600', fontSize: 14 },
+  previewBtnText: { color: '#3B82F6', fontWeight: '600', fontSize: 14 },
   previewResult: {
-    backgroundColor: '#F0FDF4', borderRadius: 8, padding: 12,
-    marginBottom: 8, borderWidth: 1, borderColor: '#BBF7D0',
+    backgroundColor: '#0D2818', borderRadius: 8, padding: 12,
+    borderWidth: 1, borderColor: '#14532D',
   },
-  previewResultText: { color: '#15803D', fontSize: 14, textAlign: 'center' },
+  previewResultText: { color: '#4ADE80', fontSize: 14, textAlign: 'center' },
   previewCount: { fontWeight: '700', fontSize: 16 },
   createBtn: {
     backgroundColor: '#2563EB', borderRadius: 10,
-    padding: 15, alignItems: 'center', marginTop: 8,
+    padding: 15, alignItems: 'center',
   },
-  createBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
-  btnDisabled: { opacity: 0.6 },
-  note: { fontSize: 12, color: '#94A3B8', textAlign: 'center', marginTop: 12, lineHeight: 18 },
+  createBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  btnDisabled: { opacity: 0.4 },
 });
