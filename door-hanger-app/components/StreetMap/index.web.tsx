@@ -26,8 +26,16 @@ export default function StreetMap({
     let map: any;
 
     async function init() {
+      // Inject leaflet CSS via link tag (Metro can't bundle CSS files)
+      if (!document.getElementById('leaflet-css')) {
+        const link = document.createElement('link');
+        link.id = 'leaflet-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(link);
+      }
+
       L = (await import('leaflet')).default;
-      await import('leaflet/dist/leaflet.css' as any);
 
       if (!containerRef.current || mapRef.current) return;
 
