@@ -131,6 +131,11 @@ export async function saveStreets(streets: Street[]) {
   const others = existing.filter(s => !zoneIds.has(s.zoneId));
   await AsyncStorage.setItem(KEYS.streets, JSON.stringify([...others, ...streets]));
 }
+export async function addStreet(street: Street) {
+  const existing = await getStreets();
+  existing.push(street);
+  await AsyncStorage.setItem(KEYS.streets, JSON.stringify(existing));
+}
 
 // ── Completions ──────────────────────────────────────────
 export async function getCompletions(zoneId?: string): Promise<Completion[]> {

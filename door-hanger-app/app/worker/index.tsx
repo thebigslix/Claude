@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, FlatList,
-  ActivityIndicator, Modal, Image, Alert, StatusBar, Platform,
+  View, Text, StyleSheet, TouchableOpacity, TextInput,
+  ActivityIndicator, Modal, Alert, StatusBar, Platform,
+  KeyboardAvoidingView, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import {
-  getCurrentWorker, getZones, getStreets, getYardSigns, saveYardSign, deleteYardSign,
-  getActiveShift, startShift, endShift,
-  clearCurrentWorker,
-  Zone, Street, Worker, ShiftSession, YardSign,
+  getCurrentWorker, getZones, getStreets, getCompletions,
+  markStreetComplete, unmarkStreetComplete, addStreet,
+  getActiveShift, startShift, endShift, clearCurrentWorker,
+  Zone, Street, Worker, Completion, ShiftSession,
 } from '../../lib/storage';
 import { reverseGeocodeStreet } from '../../lib/overpass';
 import StreetMap from '../../components/StreetMap';
@@ -25,7 +25,7 @@ export default function WorkerScreen() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
   const [streets, setStreets] = useState<Street[]>([]);
-  const [pins, setPins] = useState<YardSign[]>([]);
+  const [completions, setCompletions] = useState<Completion[]>([]);
   const [mapType, setMapType] = useState<MapType>('dark');
 
   const [userLat, setUserLat] = useState<number | undefined>();
@@ -37,9 +37,17 @@ export default function WorkerScreen() {
   const [shiftSeconds, setShiftSeconds] = useState(0);
   const shiftTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [dropping, setDropping] = useState(false);
-  const [viewPin, setViewPin] = useState<YardSign | null>(null);
-  const [listOpen, setListOpen] = useState(false);
+  // Bottom sheet for selected street
+  const [selectedStreet, setSelectedStreet] = useState<Street | null>(null);
+  const [hangerCount, setHangerCount] = useState('');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const sheetAnim = useRef(new Animated.Value(0)).current;
+
+  // Add missing street modal
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [newStreetName, setNewStreetName] = useState('');
+  const [addingSaving, setAddingSaving] = useState(false);
 
   useEffect(() => {
     StatusBar.setBarStyle('light-content');
@@ -57,23 +65,30 @@ export default function WorkerScreen() {
     const [z, shift] = await Promise.all([getZones(), getActiveShift()]);
     setZones(z);
     if (shift) { setActiveShift(shift); startShiftTimer(shift); }
-    if (z.length > 0) await selectZone(z[0], w);
+    if (z.length > 0) await selectZone(z[0]);
+    await startTracking();
   }
 
-  async function selectZone(zone: Zone, w?: Worker) {
+  async function selectZone(zone: Zone) {
     setSelectedZone(zone);
-    const [s, p] = await Promise.all([getStreets(zone.id), getYardSigns(zone.id)]);
+    closeSheet();
+    const [s, c] = await Promise.all([getStreets(zone.id), getCompletions(zone.id)]);
     setStreets(s);
-    setPins(p);
-    startTracking(w ?? worker!);
+    setCompletions(c);
   }
 
-  async function startTracking(_w: Worker) {
+  async function refreshData(zone: Zone) {
+    const [s, c] = await Promise.all([getStreets(zone.id), getCompletions(zone.id)]);
+    setStreets(s);
+    setCompletions(c);
+  }
+
+  async function startTracking() {
     locationSub.current?.remove();
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return;
     locationSub.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, distanceInterval: 8 },
+      { accuracy: Location.Accuracy.High, distanceInterval: 10 },
       async (loc) => {
         setUserLat(loc.coords.latitude);
         setUserLng(loc.coords.longitude);
@@ -81,6 +96,23 @@ export default function WorkerScreen() {
         setCurrentStreet(name);
       }
     );
+  }
+
+  // ── Sheet ────────────────────────────────────────────
+  function openSheet(street: Street) {
+    const comp = completions.find(c => c.streetId === street.id);
+    setSelectedStreet(street);
+    setHangerCount(comp?.hangerCount != null ? String(comp.hangerCount) : '');
+    setNote(comp?.note ?? '');
+    Animated.spring(sheetAnim, { toValue: 1, useNativeDriver: true, tension: 65, friction: 11 }).start();
+  }
+
+  function closeSheet() {
+    Animated.timing(sheetAnim, { toValue: 0, duration: 220, useNativeDriver: true }).start(() => {
+      setSelectedStreet(null);
+      setHangerCount('');
+      setNote('');
+    });
   }
 
   // ── Shift ────────────────────────────────────────────
@@ -123,62 +155,51 @@ export default function WorkerScreen() {
       : `${m}:${String(s).padStart(2, '0')}`;
   }
 
-  // ── Drop pin ─────────────────────────────────────────
-  async function handleDropPin() {
-    if (!worker || !selectedZone) return;
-    if (!activeShift) {
-      Alert.alert('Start your shift first', 'Tap "Start Shift" before dropping pins.');
-      return;
-    }
-    setDropping(true);
-    try {
-      const camPerm = await ImagePicker.requestCameraPermissionsAsync();
-      if (camPerm.status !== 'granted') {
-        Alert.alert('Camera permission needed', 'Please allow camera access in your device Settings to drop pins.');
-        setDropping(false);
-        return;
-      }
+  // ── Mark street ──────────────────────────────────────
+  const isComplete = (street: Street) => completions.some(c => c.streetId === street.id);
 
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.7,
-      });
-      if (result.canceled) { setDropping(false); return; }
-
-      const photoUri = result.assets[0].uri;
-      const lat = userLat ?? selectedZone.centerLat;
-      const lng = userLng ?? selectedZone.centerLng;
-
-      const pin: YardSign = {
-        id: `pin-${Date.now()}`,
-        workerId: worker.id,
-        workerName: worker.name,
-        zoneId: selectedZone.id,
-        shiftId: activeShift.id,
-        lat, lng,
-        placedAt: new Date().toISOString(),
-        photoUri,
-        address: currentStreet ?? undefined,
-      };
-
-      await saveYardSign(pin);
-      setPins(await getYardSigns(selectedZone.id));
-    } finally {
-      setDropping(false);
-    }
+  async function handleMarkDone() {
+    if (!selectedStreet || !worker || !selectedZone) return;
+    setSaving(true);
+    const count = parseInt(hangerCount, 10);
+    await markStreetComplete(selectedStreet.id, worker, isNaN(count) ? undefined : count, note);
+    await refreshData(selectedZone);
+    setSaving(false);
+    closeSheet();
   }
 
-  async function handleDeletePin(pin: YardSign) {
-    Alert.alert('Remove Pin', 'Remove this door hanger pin?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove', style: 'destructive', onPress: async () => {
-          await deleteYardSign(pin.id);
-          setPins(await getYardSigns(selectedZone!.id));
-          setViewPin(null);
-        },
-      },
-    ]);
+  async function handleUnmark() {
+    if (!selectedStreet || !selectedZone) return;
+    setSaving(true);
+    await unmarkStreetComplete(selectedStreet.id);
+    await refreshData(selectedZone);
+    setSaving(false);
+    closeSheet();
+  }
+
+  // ── Add missing street ───────────────────────────────
+  function openAddStreet() {
+    setNewStreetName(currentStreet ?? '');
+    setAddModalOpen(true);
+  }
+
+  async function handleAddStreet() {
+    if (!newStreetName.trim() || !selectedZone) return;
+    setAddingSaving(true);
+    const lat = userLat ?? selectedZone.centerLat;
+    const lng = userLng ?? selectedZone.centerLng;
+    const street: Street = {
+      id: `custom-${Date.now()}`,
+      zoneId: selectedZone.id,
+      name: newStreetName.trim(),
+      osmId: `custom-${Date.now()}`,
+      geometry: [[lat - 0.0001, lng - 0.0001], [lat + 0.0001, lng + 0.0001]],
+    };
+    await addStreet(street);
+    await refreshData(selectedZone);
+    setAddingSaving(false);
+    setAddModalOpen(false);
+    setNewStreetName('');
   }
 
   async function handleLogout() {
@@ -188,8 +209,10 @@ export default function WorkerScreen() {
     router.replace('/');
   }
 
-  const shiftPins = activeShift ? pins.filter(p => p.shiftId === activeShift.id) : [];
-  const totalPins = pins.length;
+  const sheetTranslateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [320, 0] });
+  const done = completions.length;
+  const total = streets.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
   if (!worker) {
     return <View style={s.loading}><ActivityIndicator color="#fff" /></View>;
@@ -205,20 +228,20 @@ export default function WorkerScreen() {
           centerLat={selectedZone.centerLat}
           centerLng={selectedZone.centerLng}
           streets={streets}
-          completions={[]}
-          yardSigns={pins}
+          completions={completions}
+          yardSigns={[]}
           userLat={userLat}
           userLng={userLng}
           mapType={mapType}
           placingSign={false}
-          onStreetPress={() => {}}
+          onStreetPress={openSheet}
           onMapPress={() => {}}
-          onYardSignPress={setViewPin}
+          onYardSignPress={() => {}}
         />
       ) : (
         <View style={s.emptyMap}>
           <Text style={s.emptyIcon}>🗺️</Text>
-          <Text style={s.emptyTitle}>No zones assigned</Text>
+          <Text style={s.emptyTitle}>No zones yet</Text>
           <Text style={s.emptySub}>Ask your manager to create a zone.</Text>
         </View>
       )}
@@ -258,14 +281,14 @@ export default function WorkerScreen() {
               <View style={s.shiftLeft}>
                 <View style={s.shiftDot} />
                 <Text style={s.shiftTime}>{formatTime(shiftSeconds)}</Text>
-                <Text style={s.shiftLabel}>  on shift</Text>
               </View>
-              <View style={s.shiftRight}>
-                <Text style={s.pinCount}>🚪 {shiftPins.length}</Text>
-                <TouchableOpacity style={s.clockOutBtn} onPress={handleEndShift}>
-                  <Text style={s.clockOutText}>Clock Out</Text>
-                </TouchableOpacity>
+              <View style={s.shiftCenter}>
+                <Text style={s.progressText}>{done}/{total} streets · {pct}%</Text>
+                <View style={s.progressTrack}><View style={[s.progressFill, { width: `${pct}%` as any }]} /></View>
               </View>
+              <TouchableOpacity style={s.clockOutBtn} onPress={handleEndShift}>
+                <Text style={s.clockOutText}>Clock Out</Text>
+              </TouchableOpacity>
             </>
           ) : (
             <TouchableOpacity style={s.startShiftBtn} onPress={handleStartShift}>
@@ -276,97 +299,118 @@ export default function WorkerScreen() {
       )}
 
       {/* Current street label */}
-      {currentStreet && (
-        <View style={[s.streetLabel, { bottom: 120 + insets.bottom }]}>
+      {currentStreet && !selectedStreet && (
+        <View style={[s.streetLabel, { bottom: 88 + insets.bottom }]}>
           <Text style={s.streetLabelText} numberOfLines={1}>📍 {currentStreet}</Text>
         </View>
       )}
 
-      {/* ── DROP PIN BUTTON ── */}
-      {selectedZone && (
+      {/* ── ADD MISSING STREET BUTTON ── */}
+      {selectedZone && !selectedStreet && (
         <TouchableOpacity
-          style={[s.dropBtn, { bottom: 32 + insets.bottom }, (!activeShift || dropping) && s.dropBtnDim]}
-          onPress={handleDropPin}
-          disabled={dropping || !activeShift}
-          activeOpacity={0.85}
+          style={[s.addStreetBtn, { bottom: 24 + insets.bottom }]}
+          onPress={openAddStreet}
+          activeOpacity={0.8}
         >
-          {dropping
-            ? <ActivityIndicator color="#000" />
-            : <>
-                <Text style={s.dropBtnIcon}>📷</Text>
-                <Text style={s.dropBtnText}>Drop Pin</Text>
-              </>
-          }
+          <Text style={s.addStreetText}>+ Missing Street</Text>
         </TouchableOpacity>
       )}
 
-      {/* Pin count / list toggle */}
-      {selectedZone && totalPins > 0 && (
-        <TouchableOpacity
-          style={[s.pinListBtn, { bottom: 32 + insets.bottom }]}
-          onPress={() => setListOpen(true)}
-        >
-          <Text style={s.pinListCount}>{totalPins}</Text>
-          <Text style={s.pinListLabel}>pins</Text>
-        </TouchableOpacity>
-      )}
+      {/* ── BOTTOM SHEET ── */}
+      {selectedStreet && (
+        <Animated.View style={[s.sheet, { paddingBottom: insets.bottom + 8, transform: [{ translateY: sheetTranslateY }] }]}>
+          <View style={s.sheetHandle} />
 
-      {/* ── PIN LIST MODAL ── */}
-      <Modal visible={listOpen} animationType="slide" transparent statusBarTranslucent>
-        <View style={s.listModalBg}>
-          <View style={[s.listModal, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={s.listModalHandle} />
-            <View style={s.listModalHeader}>
-              <Text style={s.listModalTitle}>All Pins ({totalPins})</Text>
-              <TouchableOpacity onPress={() => setListOpen(false)}>
-                <Text style={s.listModalClose}>Done</Text>
+          <View style={s.sheetHeader}>
+            <Text style={s.sheetStreetName} numberOfLines={2}>{selectedStreet.name}</Text>
+            {isComplete(selectedStreet) && (
+              <View style={s.doneBadge}><Text style={s.doneBadgeText}>Done ✓</Text></View>
+            )}
+          </View>
+
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <View style={s.sheetField}>
+              <Text style={s.sheetFieldLabel}>DOOR HANGERS PLACED</Text>
+              <TextInput
+                style={s.sheetInput}
+                placeholder="0"
+                placeholderTextColor="#333"
+                keyboardType="number-pad"
+                value={hangerCount}
+                onChangeText={setHangerCount}
+                selectionColor="#fff"
+              />
+            </View>
+
+            <View style={s.sheetField}>
+              <Text style={s.sheetFieldLabel}>NOTE (optional)</Text>
+              <TextInput
+                style={s.sheetInput}
+                placeholder="e.g. gated community, dogs..."
+                placeholderTextColor="#333"
+                value={note}
+                onChangeText={setNote}
+                selectionColor="#fff"
+              />
+            </View>
+
+            <View style={s.sheetBtns}>
+              {isComplete(selectedStreet) ? (
+                <TouchableOpacity style={s.unmarkBtn} onPress={handleUnmark} disabled={saving}>
+                  {saving ? <ActivityIndicator color="#EF4444" /> : <Text style={s.unmarkBtnText}>Unmark Done</Text>}
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={[s.doneBtn, saving && s.dim]}
+                onPress={handleMarkDone}
+                disabled={saving}
+              >
+                {saving
+                  ? <ActivityIndicator color="#000" />
+                  : <Text style={s.doneBtnText}>{isComplete(selectedStreet) ? 'Update' : 'Mark Done ✓'}</Text>
+                }
+              </TouchableOpacity>
+              <TouchableOpacity style={s.cancelBtn} onPress={closeSheet}>
+                <Text style={s.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
             </View>
-            <FlatList
-              data={[...pins].reverse()}
-              keyExtractor={item => item.id}
-              contentContainerStyle={{ paddingBottom: 16 }}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={s.pinRow} onPress={() => { setListOpen(false); setViewPin(item); }} activeOpacity={0.7}>
-                  {item.photoUri
-                    ? <Image source={{ uri: item.photoUri }} style={s.pinThumb} />
-                    : <View style={s.pinThumbEmpty}><Text>📍</Text></View>
-                  }
-                  <View style={s.pinRowInfo}>
-                    <Text style={s.pinRowAddress}>{item.address ?? 'Unknown street'}</Text>
-                    <Text style={s.pinRowMeta}>
-                      {item.workerName} · {new Date(item.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                  </View>
-                  <Text style={s.pinRowArrow}>›</Text>
-                </TouchableOpacity>
-              )}
+          </KeyboardAvoidingView>
+        </Animated.View>
+      )}
+
+      {/* ── ADD STREET MODAL ── */}
+      <Modal visible={addModalOpen} animationType="slide" transparent statusBarTranslucent>
+        <View style={s.modalBg}>
+          <View style={[s.modal, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.sheetHandle} />
+            <Text style={s.modalTitle}>Add Missing Street</Text>
+            <Text style={s.modalSub}>This street will be added to your zone map for tracking.</Text>
+
+            <Text style={s.sheetFieldLabel}>STREET NAME</Text>
+            <TextInput
+              style={s.sheetInput}
+              placeholder="Enter street name"
+              placeholderTextColor="#333"
+              value={newStreetName}
+              onChangeText={setNewStreetName}
+              autoCapitalize="words"
+              selectionColor="#fff"
+              autoFocus
             />
-          </View>
-        </View>
-      </Modal>
 
-      {/* ── VIEW PIN MODAL ── */}
-      <Modal visible={!!viewPin} animationType="slide" transparent statusBarTranslucent>
-        <View style={s.pinModalBg}>
-          <View style={[s.pinModal, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={s.listModalHandle} />
-            <Text style={s.pinModalStreet}>{viewPin?.address ?? 'Unknown street'}</Text>
-            <Text style={s.pinModalMeta}>
-              {viewPin?.workerName} · {viewPin && new Date(viewPin.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </Text>
-
-            {viewPin?.photoUri
-              ? <Image source={{ uri: viewPin.photoUri }} style={s.pinModalPhoto} resizeMode="cover" />
-              : <View style={s.pinModalNoPhoto}><Text style={s.noPhotoText}>No photo</Text></View>
-            }
-
-            <View style={s.pinModalBtns}>
-              <TouchableOpacity style={s.removeBtn} onPress={() => viewPin && handleDeletePin(viewPin)}>
-                <Text style={s.removeBtnText}>Remove Pin</Text>
+            <View style={s.sheetBtns}>
+              <TouchableOpacity
+                style={[s.doneBtn, (!newStreetName.trim() || addingSaving) && s.dim]}
+                onPress={handleAddStreet}
+                disabled={!newStreetName.trim() || addingSaving}
+              >
+                {addingSaving
+                  ? <ActivityIndicator color="#000" />
+                  : <Text style={s.doneBtnText}>Add Street</Text>
+                }
               </TouchableOpacity>
-              <TouchableOpacity style={s.closeBtn} onPress={() => setViewPin(null)}>
-                <Text style={s.closeBtnText}>Close</Text>
+              <TouchableOpacity style={s.cancelBtn} onPress={() => setAddModalOpen(false)}>
+                <Text style={s.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -384,15 +428,14 @@ const s = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: '700', color: '#fff' },
   emptySub: { fontSize: 13, color: '#444', marginTop: 4 },
 
-  // TOP BAR
   topBar: {
     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
     flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between',
     paddingHorizontal: 14, paddingBottom: 10,
   },
   topLeft: { flex: 1, marginRight: 8 },
-  topName: { fontSize: 15, fontWeight: '800', color: '#fff', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
-  topZone: { fontSize: 11, color: '#888', marginTop: 1 },
+  topName: { fontSize: 15, fontWeight: '800', color: '#fff', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  topZone: { fontSize: 11, color: '#aaa', marginTop: 1, textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   topRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   iconBtn: { backgroundColor: 'rgba(0,0,0,0.8)', borderRadius: 20, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#222' },
   iconBtnText: { fontSize: 16 },
@@ -403,84 +446,65 @@ const s = StyleSheet.create({
   exitBtn: { backgroundColor: 'rgba(239,68,68,0.12)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)' },
   exitText: { color: '#EF4444', fontSize: 12, fontWeight: '700' },
 
-  // SHIFT BAR
   shiftBar: {
     position: 'absolute', left: 14, right: 14, zIndex: 25,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: 'rgba(0,0,0,0.88)', borderRadius: 14,
-    paddingHorizontal: 16, paddingVertical: 10,
+    paddingHorizontal: 14, paddingVertical: 10,
     borderWidth: 1, borderColor: '#1a1a1a',
   },
   shiftLeft: { flexDirection: 'row', alignItems: 'center' },
   shiftDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4ADE80', marginRight: 8 },
-  shiftTime: { fontSize: 18, fontWeight: '800', color: '#fff' },
-  shiftLabel: { fontSize: 12, color: '#555' },
-  shiftRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  pinCount: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  shiftTime: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  shiftCenter: { flex: 1, paddingHorizontal: 12 },
+  progressText: { fontSize: 11, color: '#888', marginBottom: 4 },
+  progressTrack: { height: 2, backgroundColor: '#222', borderRadius: 1 },
+  progressFill: { height: 2, backgroundColor: '#3B82F6', borderRadius: 1 },
   clockOutBtn: { backgroundColor: 'rgba(239,68,68,0.12)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)' },
   clockOutText: { color: '#EF4444', fontSize: 12, fontWeight: '700' },
   startShiftBtn: { flex: 1, alignItems: 'center' },
   startShiftText: { color: '#3B82F6', fontSize: 15, fontWeight: '700' },
 
-  // STREET LABEL
   streetLabel: {
-    position: 'absolute', left: 14, right: 80, zIndex: 20,
+    position: 'absolute', left: 14, right: 14, zIndex: 20,
     backgroundColor: 'rgba(0,0,0,0.8)', borderRadius: 10,
     paddingHorizontal: 12, paddingVertical: 8,
     borderWidth: 1, borderColor: '#1a1a1a',
   },
   streetLabelText: { fontSize: 13, color: '#888', fontWeight: '500' },
 
-  // DROP PIN BUTTON
-  dropBtn: {
-    position: 'absolute', left: '50%', zIndex: 30,
-    transform: [{ translateX: -70 }],
-    width: 140, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, backgroundColor: '#fff', borderRadius: 30,
-    paddingVertical: 14, paddingHorizontal: 24,
-    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
+  addStreetBtn: {
+    position: 'absolute', alignSelf: 'center', zIndex: 20,
+    backgroundColor: 'rgba(0,0,0,0.88)', borderRadius: 20,
+    paddingHorizontal: 18, paddingVertical: 10,
+    borderWidth: 1, borderColor: '#222',
   },
-  dropBtnDim: { opacity: 0.4 },
-  dropBtnIcon: { fontSize: 20 },
-  dropBtnText: { fontSize: 16, fontWeight: '800', color: '#000' },
+  addStreetText: { color: '#3B82F6', fontSize: 13, fontWeight: '700' },
 
-  // PIN COUNT BUTTON
-  pinListBtn: {
-    position: 'absolute', right: 14, zIndex: 30,
-    backgroundColor: 'rgba(0,0,0,0.88)', borderRadius: 14,
-    paddingHorizontal: 14, paddingVertical: 10,
-    alignItems: 'center', borderWidth: 1, borderColor: '#222',
+  sheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 40,
+    backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 20, borderTopWidth: 1, borderColor: '#1a1a1a',
   },
-  pinListCount: { fontSize: 20, fontWeight: '800', color: '#fff' },
-  pinListLabel: { fontSize: 10, color: '#555', fontWeight: '600' },
+  sheetHandle: { width: 32, height: 3, backgroundColor: '#333', borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 },
+  sheetStreetName: { fontSize: 20, fontWeight: '800', color: '#fff', flex: 1, marginRight: 8 },
+  doneBadge: { backgroundColor: 'rgba(74,222,128,0.12)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(74,222,128,0.3)' },
+  doneBadgeText: { color: '#4ADE80', fontSize: 12, fontWeight: '700' },
+  sheetField: { marginBottom: 12 },
+  sheetFieldLabel: { fontSize: 10, fontWeight: '800', color: '#444', letterSpacing: 1.2, marginBottom: 6 },
+  sheetInput: { backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#222', borderRadius: 10, padding: 12, fontSize: 15, color: '#fff' },
+  sheetBtns: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  doneBtn: { flex: 2, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center' },
+  doneBtnText: { color: '#000', fontWeight: '800', fontSize: 14 },
+  unmarkBtn: { flex: 1, borderWidth: 1, borderColor: '#EF4444', borderRadius: 12, padding: 14, alignItems: 'center' },
+  unmarkBtnText: { color: '#EF4444', fontWeight: '700', fontSize: 13 },
+  cancelBtn: { flex: 1, borderWidth: 1, borderColor: '#222', borderRadius: 12, padding: 14, alignItems: 'center' },
+  cancelBtnText: { color: '#555', fontWeight: '600', fontSize: 14 },
+  dim: { opacity: 0.4 },
 
-  // PIN LIST MODAL
-  listModalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)' },
-  listModal: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%', borderTopWidth: 1, borderColor: '#1a1a1a' },
-  listModalHandle: { width: 32, height: 3, backgroundColor: '#333', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 14 },
-  listModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 8 },
-  listModalTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
-  listModalClose: { color: '#3B82F6', fontSize: 15, fontWeight: '600' },
-  pinRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1a1a1a', gap: 12 },
-  pinThumb: { width: 48, height: 48, borderRadius: 10 },
-  pinThumbEmpty: { width: 48, height: 48, borderRadius: 10, backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' },
-  pinRowInfo: { flex: 1 },
-  pinRowAddress: { fontSize: 14, fontWeight: '600', color: '#fff' },
-  pinRowMeta: { fontSize: 12, color: '#555', marginTop: 2 },
-  pinRowArrow: { fontSize: 20, color: '#333' },
-
-  // VIEW PIN MODAL
-  pinModalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.8)' },
-  pinModal: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderTopWidth: 1, borderColor: '#1a1a1a' },
-  pinModalStreet: { fontSize: 18, fontWeight: '700', color: '#fff', marginBottom: 4 },
-  pinModalMeta: { fontSize: 13, color: '#555', marginBottom: 16 },
-  pinModalPhoto: { width: '100%', height: 220, borderRadius: 14, marginBottom: 16 },
-  pinModalNoPhoto: { height: 80, backgroundColor: '#1a1a1a', borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  noPhotoText: { color: '#333', fontSize: 13 },
-  pinModalBtns: { flexDirection: 'row', gap: 10 },
-  removeBtn: { flex: 1, borderWidth: 1, borderColor: '#EF4444', borderRadius: 12, padding: 14, alignItems: 'center' },
-  removeBtnText: { color: '#EF4444', fontWeight: '700', fontSize: 14 },
-  closeBtn: { flex: 2, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center' },
-  closeBtnText: { color: '#000', fontWeight: '800', fontSize: 14 },
+  modalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)' },
+  modal: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderTopWidth: 1, borderColor: '#1a1a1a' },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#fff', marginBottom: 4 },
+  modalSub: { fontSize: 13, color: '#555', marginBottom: 20 },
 });
