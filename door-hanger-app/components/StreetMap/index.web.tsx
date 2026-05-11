@@ -89,12 +89,14 @@ export default function StreetMap({
     polylineRefs.current.forEach(p => p.remove());
     polylineRefs.current.clear();
     streets.forEach(street => {
-      if (!street.geometry || street.geometry.length < 2) return;
+      if (!street.geometry || street.geometry.length === 0) return;
       const isDone = completedIds.has(street.id);
+      // Passing an array of segments to L.polyline creates a multi-polyline
+      // — each segment draws independently with no connecting lines between them
       const polyline = L.polyline(street.geometry, {
         color: isDone ? '#4ADE80' : '#60A5FA',
-        weight: isDone ? 6 : 4,
-        opacity: isDone ? 1 : 0.8,
+        weight: isDone ? 5 : 3,
+        opacity: isDone ? 1 : 0.75,
       });
       polyline.bindTooltip(street.name, { sticky: true, className: 'street-tooltip' });
       polyline.on('click', (e: any) => { L.DomEvent.stopPropagation(e); onStreetPress(street); });

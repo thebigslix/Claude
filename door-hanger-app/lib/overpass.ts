@@ -3,16 +3,14 @@ import { Street } from './storage';
 type OverpassElement = {
   type: string;
   id: number;
-  tags?: { name?: string; highway?: string };
+  tags?: { name?: string; highway?: string; junction?: string };
   geometry?: { lat: number; lon: number }[];
 };
 
-// All road types workers would cover
+// Only roads a door-hanger worker would walk
 const INCLUDE_HIGHWAY = new Set([
-  'residential', 'secondary', 'tertiary', 'unclassified',
-  'primary', 'living_street', 'service', 'road',
-  'secondary_link', 'tertiary_link', 'primary_link',
-  'trunk', 'trunk_link',
+  'residential', 'living_street', 'unclassified',
+  'tertiary', 'secondary', 'primary',
 ]);
 
 export async function fetchStreetsInRadius(
@@ -38,28 +36,29 @@ export async function fetchStreetsInRadius(
   const json = await res.json();
   const elements: OverpassElement[] = json.elements ?? [];
 
-  // Group segments by name (or OSM ID for unnamed roads)
-  const streetMap = new Map<string, { geometry: [number, number][]; osmId: string }>();
+  // Group segments by street name; each OSM way stays as its own segment
+  // to prevent long diagonal glitch lines when segments aren't connected
+  const streetMap = new Map<string, { segments: [number, number][][]; osmId: string }>();
 
   for (const el of elements) {
     if (el.type !== 'way') continue;
     const highway = el.tags?.highway;
     if (!highway || !INCLUDE_HIGHWAY.has(highway)) continue;
+    // Skip roundabouts — they add visual noise and aren't individual streets
+    if (el.tags?.junction === 'roundabout') continue;
 
-    const geometry: [number, number][] = (el.geometry ?? []).map(
+    const segment: [number, number][] = (el.geometry ?? []).map(
       p => [p.lat, p.lon] as [number, number]
     );
-    if (geometry.length < 2) continue;
+    if (segment.length < 2) continue;
 
-    // Use name if available, otherwise use highway type + id
     const name = el.tags?.name ?? `${capitalize(highway)} (${el.id})`;
     const key = el.tags?.name ?? `osm-${el.id}`;
 
     if (streetMap.has(key)) {
-      // Append geometry segments for same-named streets
-      streetMap.get(key)!.geometry.push(...geometry);
+      streetMap.get(key)!.segments.push(segment);
     } else {
-      streetMap.set(key, { geometry, osmId: String(el.id) });
+      streetMap.set(key, { segments: [segment], osmId: String(el.id) });
     }
   }
 
@@ -71,7 +70,7 @@ export async function fetchStreetsInRadius(
       zoneId,
       name,
       osmId: data.osmId,
-      geometry: data.geometry,
+      geometry: data.segments,
     });
   }
 

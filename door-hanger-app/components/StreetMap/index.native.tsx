@@ -38,19 +38,23 @@ export default function StreetMap({
       showsUserLocation={false}
       onPress={placingSign ? handlePress : undefined}
     >
-      {streets.map(street => {
-        if (!street.geometry || street.geometry.length < 2) return null;
+      {streets.flatMap(street => {
+        if (!street.geometry || street.geometry.length === 0) return [];
         const isDone = completedIds.has(street.id);
-        return (
-          <Polyline
-            key={street.id}
-            coordinates={street.geometry.map(([lat, lng]) => ({ latitude: lat, longitude: lng }))}
-            strokeColor={isDone ? '#4ADE80' : '#60A5FA'}
-            strokeWidth={isDone ? 6 : 4}
-            tappable
-            onPress={() => !placingSign && onStreetPress(street)}
-          />
-        );
+        // Render each disconnected segment separately to avoid diagonal glitch lines
+        return street.geometry.map((segment, segIdx) => {
+          if (segment.length < 2) return null;
+          return (
+            <Polyline
+              key={`${street.id}-${segIdx}`}
+              coordinates={segment.map(([lat, lng]) => ({ latitude: lat, longitude: lng }))}
+              strokeColor={isDone ? '#4ADE80' : '#60A5FA'}
+              strokeWidth={isDone ? 5 : 3}
+              tappable
+              onPress={() => !placingSign && onStreetPress(street)}
+            />
+          );
+        });
       })}
 
       {yardSigns.map(sign => (

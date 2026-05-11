@@ -21,7 +21,7 @@ export type Street = {
   zoneId: string;
   name: string;
   osmId: string;
-  geometry: [number, number][];
+  geometry: [number, number][][]; // array of disconnected segments
 };
 
 export type Completion = {

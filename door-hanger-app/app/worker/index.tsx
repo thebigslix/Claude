@@ -193,7 +193,7 @@ export default function WorkerScreen() {
       zoneId: selectedZone.id,
       name: newStreetName.trim(),
       osmId: `custom-${Date.now()}`,
-      geometry: [[lat - 0.0001, lng - 0.0001], [lat + 0.0001, lng + 0.0001]],
+      geometry: [[[lat - 0.0001, lng - 0.0001], [lat + 0.0001, lng + 0.0001]]],
     };
     await addStreet(street);
     await refreshData(selectedZone);
