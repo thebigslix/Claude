@@ -2,16 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
   ActivityIndicator, Modal, Alert, StatusBar, Platform,
-  KeyboardAvoidingView, Animated,
+  KeyboardAvoidingView, Animated, Keyboard, TouchableWithoutFeedback,
+  Image, FlatList,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import {
   getCurrentWorker, getZones, getStreets, getCompletions,
   markStreetComplete, unmarkStreetComplete, addStreet,
   getActiveShift, startShift, endShift, clearCurrentWorker,
-  Zone, Street, Worker, Completion, ShiftSession,
+  getYardSigns, saveYardSign, deleteYardSign,
+  Zone, Street, Worker, Completion, ShiftSession, YardSign,
 } from '../../lib/storage';
 import { reverseGeocodeStreet } from '../../lib/overpass';
 import StreetMap from '../../components/StreetMap';
@@ -26,6 +29,7 @@ export default function WorkerScreen() {
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
   const [streets, setStreets] = useState<Street[]>([]);
   const [completions, setCompletions] = useState<Completion[]>([]);
+  const [pins, setPins] = useState<YardSign[]>([]);
   const [mapType, setMapType] = useState<MapType>('dark');
 
   const [userLat, setUserLat] = useState<number | undefined>();
@@ -37,7 +41,7 @@ export default function WorkerScreen() {
   const [shiftSeconds, setShiftSeconds] = useState(0);
   const shiftTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Bottom sheet for selected street
+  // Street bottom sheet
   const [selectedStreet, setSelectedStreet] = useState<Street | null>(null);
   const [hangerCount, setHangerCount] = useState('');
   const [note, setNote] = useState('');
@@ -48,6 +52,11 @@ export default function WorkerScreen() {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [newStreetName, setNewStreetName] = useState('');
   const [addingSaving, setAddingSaving] = useState(false);
+
+  // Photo pin
+  const [dropping, setDropping] = useState(false);
+  const [viewPin, setViewPin] = useState<YardSign | null>(null);
+  const [pinListOpen, setPinListOpen] = useState(false);
 
   useEffect(() => {
     StatusBar.setBarStyle('light-content');
@@ -72,15 +81,17 @@ export default function WorkerScreen() {
   async function selectZone(zone: Zone) {
     setSelectedZone(zone);
     closeSheet();
-    const [s, c] = await Promise.all([getStreets(zone.id), getCompletions(zone.id)]);
+    const [s, c, p] = await Promise.all([getStreets(zone.id), getCompletions(zone.id), getYardSigns(zone.id)]);
     setStreets(s);
     setCompletions(c);
+    setPins(p);
   }
 
   async function refreshData(zone: Zone) {
-    const [s, c] = await Promise.all([getStreets(zone.id), getCompletions(zone.id)]);
+    const [s, c, p] = await Promise.all([getStreets(zone.id), getCompletions(zone.id), getYardSigns(zone.id)]);
     setStreets(s);
     setCompletions(c);
+    setPins(p);
   }
 
   async function startTracking() {
@@ -100,6 +111,7 @@ export default function WorkerScreen() {
 
   // ── Sheet ────────────────────────────────────────────
   function openSheet(street: Street) {
+    Keyboard.dismiss();
     const comp = completions.find(c => c.streetId === street.id);
     setSelectedStreet(street);
     setHangerCount(comp?.hangerCount != null ? String(comp.hangerCount) : '');
@@ -108,6 +120,7 @@ export default function WorkerScreen() {
   }
 
   function closeSheet() {
+    Keyboard.dismiss();
     Animated.timing(sheetAnim, { toValue: 0, duration: 220, useNativeDriver: true }).start(() => {
       setSelectedStreet(null);
       setHangerCount('');
@@ -160,6 +173,7 @@ export default function WorkerScreen() {
 
   async function handleMarkDone() {
     if (!selectedStreet || !worker || !selectedZone) return;
+    Keyboard.dismiss();
     setSaving(true);
     const count = parseInt(hangerCount, 10);
     await markStreetComplete(selectedStreet.id, worker, isNaN(count) ? undefined : count, note);
@@ -202,6 +216,56 @@ export default function WorkerScreen() {
     setNewStreetName('');
   }
 
+  // ── Photo pin drop ───────────────────────────────────
+  async function handleDropPin() {
+    if (!worker || !selectedZone) return;
+    if (!activeShift) {
+      Alert.alert('Start your shift first', 'Tap "Start Shift" before dropping pins.');
+      return;
+    }
+    setDropping(true);
+    try {
+      const camPerm = await ImagePicker.requestCameraPermissionsAsync();
+      if (camPerm.status !== 'granted') {
+        Alert.alert('Camera permission needed', 'Allow camera access in Settings to drop pins.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+      if (result.canceled) return;
+
+      const lat = userLat ?? selectedZone.centerLat;
+      const lng = userLng ?? selectedZone.centerLng;
+      const pin: YardSign = {
+        id: `pin-${Date.now()}`,
+        workerId: worker.id,
+        workerName: worker.name,
+        zoneId: selectedZone.id,
+        shiftId: activeShift.id,
+        lat, lng,
+        placedAt: new Date().toISOString(),
+        photoUri: result.assets[0].uri,
+        address: currentStreet ?? undefined,
+      };
+      await saveYardSign(pin);
+      setPins(await getYardSigns(selectedZone.id));
+    } finally {
+      setDropping(false);
+    }
+  }
+
+  async function handleDeletePin(pin: YardSign) {
+    Alert.alert('Remove Pin', 'Remove this photo pin?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive', onPress: async () => {
+          await deleteYardSign(pin.id);
+          if (selectedZone) setPins(await getYardSigns(selectedZone.id));
+          setViewPin(null);
+        },
+      },
+    ]);
+  }
+
   async function handleLogout() {
     locationSub.current?.remove();
     if (shiftTimer.current) clearInterval(shiftTimer.current);
@@ -209,10 +273,11 @@ export default function WorkerScreen() {
     router.replace('/');
   }
 
-  const sheetTranslateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [320, 0] });
+  const sheetTranslateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [340, 0] });
   const done = completions.length;
   const total = streets.length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const shiftPins = activeShift ? pins.filter(p => p.shiftId === activeShift.id) : [];
 
   if (!worker) {
     return <View style={s.loading}><ActivityIndicator color="#fff" /></View>;
@@ -229,14 +294,14 @@ export default function WorkerScreen() {
           centerLng={selectedZone.centerLng}
           streets={streets}
           completions={completions}
-          yardSigns={[]}
+          yardSigns={pins}
           userLat={userLat}
           userLng={userLng}
           mapType={mapType}
           placingSign={false}
           onStreetPress={openSheet}
           onMapPress={() => {}}
-          onYardSignPress={() => {}}
+          onYardSignPress={setViewPin}
         />
       ) : (
         <View style={s.emptyMap}>
@@ -300,117 +365,203 @@ export default function WorkerScreen() {
 
       {/* Current street label */}
       {currentStreet && !selectedStreet && (
-        <View style={[s.streetLabel, { bottom: 88 + insets.bottom }]}>
+        <View style={[s.streetLabel, { bottom: 100 + insets.bottom }]}>
           <Text style={s.streetLabelText} numberOfLines={1}>📍 {currentStreet}</Text>
         </View>
       )}
 
-      {/* ── ADD MISSING STREET BUTTON ── */}
+      {/* ── BOTTOM BUTTONS (no sheet open) ── */}
       {selectedZone && !selectedStreet && (
-        <TouchableOpacity
-          style={[s.addStreetBtn, { bottom: 24 + insets.bottom }]}
-          onPress={openAddStreet}
-          activeOpacity={0.8}
-        >
-          <Text style={s.addStreetText}>+ Missing Street</Text>
-        </TouchableOpacity>
+        <View style={[s.bottomRow, { bottom: 24 + insets.bottom }]}>
+          <TouchableOpacity style={s.addStreetBtn} onPress={openAddStreet}>
+            <Text style={s.addStreetText}>+ Missing Street</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[s.dropPinBtn, (!activeShift || dropping) && s.dropPinDim]}
+            onPress={handleDropPin}
+            disabled={dropping || !activeShift}
+            activeOpacity={0.85}
+          >
+            {dropping
+              ? <ActivityIndicator color="#000" size="small" />
+              : <Text style={s.dropPinText}>📷  Drop Pin{activeShift && shiftPins.length > 0 ? `  ·  ${shiftPins.length}` : ''}</Text>
+            }
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* ── BOTTOM SHEET ── */}
       {selectedStreet && (
-        <Animated.View style={[s.sheet, { paddingBottom: insets.bottom + 8, transform: [{ translateY: sheetTranslateY }] }]}>
-          <View style={s.sheetHandle} />
+        <>
+          {/* Backdrop to dismiss keyboard on tap outside inputs */}
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
 
-          <View style={s.sheetHeader}>
-            <Text style={s.sheetStreetName} numberOfLines={2}>{selectedStreet.name}</Text>
-            {isComplete(selectedStreet) && (
-              <View style={s.doneBadge}><Text style={s.doneBadgeText}>Done ✓</Text></View>
-            )}
-          </View>
+          <Animated.View style={[s.sheet, { paddingBottom: insets.bottom + 8, transform: [{ translateY: sheetTranslateY }] }]}>
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+              <View style={s.sheetHandle} />
+            </TouchableWithoutFeedback>
 
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <View style={s.sheetField}>
-              <Text style={s.sheetFieldLabel}>DOOR HANGERS PLACED</Text>
-              <TextInput
-                style={s.sheetInput}
-                placeholder="0"
-                placeholderTextColor="#333"
-                keyboardType="number-pad"
-                value={hangerCount}
-                onChangeText={setHangerCount}
-                selectionColor="#fff"
-              />
+            <View style={s.sheetHeader}>
+              <Text style={s.sheetStreetName} numberOfLines={2}>{selectedStreet.name}</Text>
+              {isComplete(selectedStreet) && (
+                <View style={s.doneBadge}><Text style={s.doneBadgeText}>Done ✓</Text></View>
+              )}
             </View>
 
-            <View style={s.sheetField}>
-              <Text style={s.sheetFieldLabel}>NOTE (optional)</Text>
-              <TextInput
-                style={s.sheetInput}
-                placeholder="e.g. gated community, dogs..."
-                placeholderTextColor="#333"
-                value={note}
-                onChangeText={setNote}
-                selectionColor="#fff"
-              />
-            </View>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+              <View style={s.sheetField}>
+                <Text style={s.sheetFieldLabel}>DOOR HANGERS PLACED</Text>
+                <TextInput
+                  style={s.sheetInput}
+                  placeholder="0"
+                  placeholderTextColor="#333"
+                  keyboardType="number-pad"
+                  returnKeyType="done"
+                  onSubmitEditing={Keyboard.dismiss}
+                  value={hangerCount}
+                  onChangeText={setHangerCount}
+                  selectionColor="#fff"
+                />
+              </View>
 
-            <View style={s.sheetBtns}>
-              {isComplete(selectedStreet) ? (
-                <TouchableOpacity style={s.unmarkBtn} onPress={handleUnmark} disabled={saving}>
-                  {saving ? <ActivityIndicator color="#EF4444" /> : <Text style={s.unmarkBtnText}>Unmark Done</Text>}
+              <View style={s.sheetField}>
+                <Text style={s.sheetFieldLabel}>NOTE (optional)</Text>
+                <TextInput
+                  style={s.sheetInput}
+                  placeholder="e.g. gated community, dogs..."
+                  placeholderTextColor="#333"
+                  returnKeyType="done"
+                  onSubmitEditing={Keyboard.dismiss}
+                  value={note}
+                  onChangeText={setNote}
+                  selectionColor="#fff"
+                />
+              </View>
+
+              <View style={s.sheetBtns}>
+                {isComplete(selectedStreet) && (
+                  <TouchableOpacity style={s.unmarkBtn} onPress={handleUnmark} disabled={saving}>
+                    {saving ? <ActivityIndicator color="#EF4444" /> : <Text style={s.unmarkBtnText}>Unmark</Text>}
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[s.doneBtn, saving && s.dim]}
+                  onPress={handleMarkDone}
+                  disabled={saving}
+                >
+                  {saving
+                    ? <ActivityIndicator color="#000" />
+                    : <Text style={s.doneBtnText}>{isComplete(selectedStreet) ? 'Update' : 'Mark Done ✓'}</Text>
+                  }
                 </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity
-                style={[s.doneBtn, saving && s.dim]}
-                onPress={handleMarkDone}
-                disabled={saving}
-              >
-                {saving
-                  ? <ActivityIndicator color="#000" />
-                  : <Text style={s.doneBtnText}>{isComplete(selectedStreet) ? 'Update' : 'Mark Done ✓'}</Text>
-                }
-              </TouchableOpacity>
-              <TouchableOpacity style={s.cancelBtn} onPress={closeSheet}>
-                <Text style={s.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        </Animated.View>
+                <TouchableOpacity style={s.cancelBtn} onPress={closeSheet}>
+                  <Text style={s.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </KeyboardAvoidingView>
+          </Animated.View>
+        </>
       )}
 
       {/* ── ADD STREET MODAL ── */}
       <Modal visible={addModalOpen} animationType="slide" transparent statusBarTranslucent>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={s.modalBg}>
+            <View style={[s.modal, { paddingBottom: insets.bottom + 16 }]}>
+              <View style={s.sheetHandle} />
+              <Text style={s.modalTitle}>Add Missing Street</Text>
+              <Text style={s.modalSub}>This street will be added to your zone for tracking.</Text>
+              <Text style={s.sheetFieldLabel}>STREET NAME</Text>
+              <TextInput
+                style={s.sheetInput}
+                placeholder="Enter street name"
+                placeholderTextColor="#333"
+                value={newStreetName}
+                onChangeText={setNewStreetName}
+                autoCapitalize="words"
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
+                selectionColor="#fff"
+                autoFocus
+              />
+              <View style={[s.sheetBtns, { marginTop: 16 }]}>
+                <TouchableOpacity
+                  style={[s.doneBtn, (!newStreetName.trim() || addingSaving) && s.dim]}
+                  onPress={handleAddStreet}
+                  disabled={!newStreetName.trim() || addingSaving}
+                >
+                  {addingSaving ? <ActivityIndicator color="#000" /> : <Text style={s.doneBtnText}>Add Street</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity style={s.cancelBtn} onPress={() => setAddModalOpen(false)}>
+                  <Text style={s.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* ── PIN LIST MODAL ── */}
+      <Modal visible={pinListOpen} animationType="slide" transparent statusBarTranslucent>
+        <View style={s.modalBg}>
+          <View style={[s.modal, { paddingBottom: insets.bottom + 16, maxHeight: '75%' }]}>
+            <View style={s.sheetHandle} />
+            <View style={s.listHeader}>
+              <Text style={s.modalTitle}>Photo Pins ({pins.length})</Text>
+              <TouchableOpacity onPress={() => setPinListOpen(false)}>
+                <Text style={s.listClose}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={[...pins].reverse()}
+              keyExtractor={item => item.id}
+              contentContainerStyle={{ paddingBottom: 8 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={s.pinRow}
+                  onPress={() => { setPinListOpen(false); setViewPin(item); }}
+                  activeOpacity={0.7}
+                >
+                  {item.photoUri
+                    ? <Image source={{ uri: item.photoUri }} style={s.pinThumb} />
+                    : <View style={s.pinThumbEmpty}><Text>📍</Text></View>
+                  }
+                  <View style={s.pinRowInfo}>
+                    <Text style={s.pinRowAddr}>{item.address ?? 'Unknown street'}</Text>
+                    <Text style={s.pinRowMeta}>
+                      {item.workerName} · {new Date(item.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                  <Text style={s.pinArrow}>›</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── VIEW PIN MODAL ── */}
+      <Modal visible={!!viewPin} animationType="slide" transparent statusBarTranslucent>
         <View style={s.modalBg}>
           <View style={[s.modal, { paddingBottom: insets.bottom + 16 }]}>
             <View style={s.sheetHandle} />
-            <Text style={s.modalTitle}>Add Missing Street</Text>
-            <Text style={s.modalSub}>This street will be added to your zone map for tracking.</Text>
-
-            <Text style={s.sheetFieldLabel}>STREET NAME</Text>
-            <TextInput
-              style={s.sheetInput}
-              placeholder="Enter street name"
-              placeholderTextColor="#333"
-              value={newStreetName}
-              onChangeText={setNewStreetName}
-              autoCapitalize="words"
-              selectionColor="#fff"
-              autoFocus
-            />
-
+            <Text style={s.modalTitle}>{viewPin?.address ?? 'Unknown street'}</Text>
+            <Text style={s.modalSub}>
+              {viewPin?.workerName} · {viewPin && new Date(viewPin.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+            {viewPin?.photoUri
+              ? <Image source={{ uri: viewPin.photoUri }} style={s.pinPhoto} resizeMode="cover" />
+              : <View style={s.pinNoPhoto}><Text style={s.noPhotoText}>No photo</Text></View>
+            }
             <View style={s.sheetBtns}>
-              <TouchableOpacity
-                style={[s.doneBtn, (!newStreetName.trim() || addingSaving) && s.dim]}
-                onPress={handleAddStreet}
-                disabled={!newStreetName.trim() || addingSaving}
-              >
-                {addingSaving
-                  ? <ActivityIndicator color="#000" />
-                  : <Text style={s.doneBtnText}>Add Street</Text>
-                }
+              <TouchableOpacity style={s.unmarkBtn} onPress={() => viewPin && handleDeletePin(viewPin)}>
+                <Text style={s.unmarkBtnText}>Remove</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.cancelBtn} onPress={() => setAddModalOpen(false)}>
-                <Text style={s.cancelBtnText}>Cancel</Text>
+              <TouchableOpacity style={s.doneBtn} onPress={() => setViewPin(null)}>
+                <Text style={s.doneBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -473,13 +624,23 @@ const s = StyleSheet.create({
   },
   streetLabelText: { fontSize: 13, color: '#888', fontWeight: '500' },
 
+  bottomRow: {
+    position: 'absolute', left: 14, right: 14, zIndex: 20,
+    flexDirection: 'row', gap: 10, alignItems: 'center',
+  },
   addStreetBtn: {
-    position: 'absolute', alignSelf: 'center', zIndex: 20,
     backgroundColor: 'rgba(0,0,0,0.88)', borderRadius: 20,
-    paddingHorizontal: 18, paddingVertical: 10,
+    paddingHorizontal: 14, paddingVertical: 11,
     borderWidth: 1, borderColor: '#222',
   },
-  addStreetText: { color: '#3B82F6', fontSize: 13, fontWeight: '700' },
+  addStreetText: { color: '#3B82F6', fontSize: 12, fontWeight: '700' },
+  dropPinBtn: {
+    flex: 1, backgroundColor: '#fff', borderRadius: 24,
+    paddingVertical: 13, alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 6,
+  },
+  dropPinDim: { opacity: 0.4 },
+  dropPinText: { fontSize: 15, fontWeight: '800', color: '#000' },
 
   sheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 40,
@@ -494,7 +655,7 @@ const s = StyleSheet.create({
   sheetField: { marginBottom: 12 },
   sheetFieldLabel: { fontSize: 10, fontWeight: '800', color: '#444', letterSpacing: 1.2, marginBottom: 6 },
   sheetInput: { backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#222', borderRadius: 10, padding: 12, fontSize: 15, color: '#fff' },
-  sheetBtns: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  sheetBtns: { flexDirection: 'row', gap: 10, marginTop: 4 },
   doneBtn: { flex: 2, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center' },
   doneBtnText: { color: '#000', fontWeight: '800', fontSize: 14 },
   unmarkBtn: { flex: 1, borderWidth: 1, borderColor: '#EF4444', borderRadius: 12, padding: 14, alignItems: 'center' },
@@ -506,5 +667,17 @@ const s = StyleSheet.create({
   modalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)' },
   modal: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderTopWidth: 1, borderColor: '#1a1a1a' },
   modalTitle: { fontSize: 18, fontWeight: '800', color: '#fff', marginBottom: 4 },
-  modalSub: { fontSize: 13, color: '#555', marginBottom: 20 },
+  modalSub: { fontSize: 13, color: '#555', marginBottom: 16 },
+  listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  listClose: { color: '#3B82F6', fontSize: 15, fontWeight: '600' },
+  pinRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1a1a1a', gap: 12 },
+  pinThumb: { width: 48, height: 48, borderRadius: 10 },
+  pinThumbEmpty: { width: 48, height: 48, borderRadius: 10, backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' },
+  pinRowInfo: { flex: 1 },
+  pinRowAddr: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  pinRowMeta: { fontSize: 12, color: '#555', marginTop: 2 },
+  pinArrow: { fontSize: 20, color: '#333' },
+  pinPhoto: { width: '100%', height: 220, borderRadius: 14, marginBottom: 16 },
+  pinNoPhoto: { height: 80, backgroundColor: '#1a1a1a', borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  noPhotoText: { color: '#333', fontSize: 13 },
 });
