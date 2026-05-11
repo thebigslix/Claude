@@ -29,6 +29,7 @@ export type Completion = {
   workerId: string;
   workerName: string;
   completedAt: string;
+  note?: string;
 };
 
 const KEYS = {
@@ -55,7 +56,6 @@ export async function clearCurrentWorker() {
 export async function getWorkers(): Promise<Worker[]> {
   const raw = await AsyncStorage.getItem(KEYS.workers);
   if (raw) return JSON.parse(raw);
-  // Seed default manager
   const defaults: Worker[] = [
     { id: 'mgr-1', name: 'Manager', pin: '0000', role: 'manager' },
   ];
@@ -126,6 +126,15 @@ export async function markStreetComplete(streetId: string, worker: Worker) {
     completedAt: new Date().toISOString(),
   });
   await AsyncStorage.setItem(KEYS.completions, JSON.stringify(completions));
+}
+
+export async function updateStreetNote(streetId: string, note: string) {
+  const completions = await getCompletions();
+  const idx = completions.findIndex(c => c.streetId === streetId);
+  if (idx >= 0) {
+    completions[idx] = { ...completions[idx], note: note.trim() || undefined };
+    await AsyncStorage.setItem(KEYS.completions, JSON.stringify(completions));
+  }
 }
 
 export async function unmarkStreetComplete(streetId: string) {
