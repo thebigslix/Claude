@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "StreetTracker",
+    "slug": "door-hanger-app",
+    "version": "1.0.0",
+    "scheme": "streettracker",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "StreetTracker uses your location to detect which street you are on.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "StreetTracker uses your location to track streets while you work."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "StreetTracker uses your location to detect which street you are on."
+        }
+      ]
+    ]
+  }
+}
