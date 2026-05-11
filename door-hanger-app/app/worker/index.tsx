@@ -1,66 +1,45 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  ActivityIndicator, Animated, Modal, TextInput,
-  KeyboardAvoidingView, Platform, StatusBar, Image, Alert,
+  ActivityIndicator, Modal, Image, Alert, StatusBar, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import {
-  getCurrentWorker, getZones, getStreets, getCompletions,
-  markStreetComplete, unmarkStreetComplete, updateCompletion, clearCurrentWorker,
+  getCurrentWorker, getZones, getStreets, getYardSigns, saveYardSign, deleteYardSign,
   getActiveShift, startShift, endShift,
-  getYardSigns, saveYardSign, deleteYardSign,
-  Zone, Street, Completion, Worker, ShiftSession, YardSign,
+  clearCurrentWorker,
+  Zone, Street, Worker, ShiftSession, YardSign,
 } from '../../lib/storage';
 import { reverseGeocodeStreet } from '../../lib/overpass';
 import StreetMap from '../../components/StreetMap';
 
-type MapMode = 'navigate' | 'placeSign';
 type MapType = 'dark' | 'satellite';
-type SheetTab = 'streets' | 'signs';
 
 export default function WorkerScreen() {
   const insets = useSafeAreaInsets();
 
-  // Core state
   const [worker, setWorker] = useState<Worker | null>(null);
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
   const [streets, setStreets] = useState<Street[]>([]);
-  const [completions, setCompletions] = useState<Completion[]>([]);
-  const [yardSigns, setYardSigns] = useState<YardSign[]>([]);
+  const [pins, setPins] = useState<YardSign[]>([]);
+  const [mapType, setMapType] = useState<MapType>('dark');
 
-  // Location
-  const [currentStreet, setCurrentStreet] = useState<string | null>(null);
   const [userLat, setUserLat] = useState<number | undefined>();
   const [userLng, setUserLng] = useState<number | undefined>();
+  const [currentStreet, setCurrentStreet] = useState<string | null>(null);
   const locationSub = useRef<Location.LocationSubscription | null>(null);
 
-  // Map UI
-  const [mapType, setMapType] = useState<MapType>('dark');
-  const [mapMode, setMapMode] = useState<MapMode>('navigate');
-
-  // Shift
   const [activeShift, setActiveShift] = useState<ShiftSession | null>(null);
   const [shiftSeconds, setShiftSeconds] = useState(0);
   const shiftTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Sheet
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetTab, setSheetTab] = useState<SheetTab>('streets');
-  const sheetAnim = useRef(new Animated.Value(0)).current;
-
-  // Modals
-  const [completeModal, setCompleteModal] = useState<Street | null>(null);
-  const [editModal, setEditModal] = useState<{ street: Street; comp: Completion } | null>(null);
-  const [signModal, setSignModal] = useState<{ lat: number; lng: number } | null>(null);
-  const [viewSignModal, setViewSignModal] = useState<YardSign | null>(null);
-  const [hangerCount, setHangerCount] = useState('');
-  const [noteText, setNoteText] = useState('');
-  const [signPhoto, setSignPhoto] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
+  const [viewPin, setViewPin] = useState<YardSign | null>(null);
+  const [listOpen, setListOpen] = useState(false);
 
   useEffect(() => {
     StatusBar.setBarStyle('light-content');
@@ -75,7 +54,6 @@ export default function WorkerScreen() {
     const w = await getCurrentWorker();
     if (!w) { router.replace('/'); return; }
     setWorker(w);
-
     const [z, shift] = await Promise.all([getZones(), getActiveShift()]);
     setZones(z);
     if (shift) { setActiveShift(shift); startShiftTimer(shift); }
@@ -84,18 +62,13 @@ export default function WorkerScreen() {
 
   async function selectZone(zone: Zone, w?: Worker) {
     setSelectedZone(zone);
-    const [s, c, signs] = await Promise.all([
-      getStreets(zone.id),
-      getCompletions(zone.id),
-      getYardSigns(zone.id),
-    ]);
+    const [s, p] = await Promise.all([getStreets(zone.id), getYardSigns(zone.id)]);
     setStreets(s);
-    setCompletions(c);
-    setYardSigns(signs);
+    setPins(p);
     startTracking(w ?? worker!);
   }
 
-  async function startTracking(w: Worker) {
+  async function startTracking(_w: Worker) {
     locationSub.current?.remove();
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return;
@@ -113,10 +86,7 @@ export default function WorkerScreen() {
   // ── Shift ────────────────────────────────────────────
   function startShiftTimer(shift: ShiftSession) {
     if (shiftTimer.current) clearInterval(shiftTimer.current);
-    const tick = () => {
-      const elapsed = Math.floor((Date.now() - new Date(shift.startTime).getTime()) / 1000);
-      setShiftSeconds(elapsed);
-    };
+    const tick = () => setShiftSeconds(Math.floor((Date.now() - new Date(shift.startTime).getTime()) / 1000));
     tick();
     shiftTimer.current = setInterval(tick, 1000);
   }
@@ -131,14 +101,12 @@ export default function WorkerScreen() {
   }
 
   async function handleEndShift() {
-    Alert.alert('End Shift', 'Are you sure you want to clock out?', [
+    Alert.alert('Clock Out', 'End your shift?', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'End Shift', style: 'destructive', onPress: async () => {
+        text: 'Clock Out', style: 'destructive', onPress: async () => {
           if (shiftTimer.current) clearInterval(shiftTimer.current);
-          const lat = userLat ?? selectedZone?.centerLat ?? 0;
-          const lng = userLng ?? selectedZone?.centerLng ?? 0;
-          await endShift(lat, lng);
+          await endShift(userLat ?? 0, userLng ?? 0);
           setActiveShift(null);
           setShiftSeconds(0);
         },
@@ -155,111 +123,56 @@ export default function WorkerScreen() {
       : `${m}:${String(s).padStart(2, '0')}`;
   }
 
-  // ── Street completion ────────────────────────────────
-  function handleStreetPress(street: Street) {
-    if (!worker) return;
-    const comp = completions.find(c => c.streetId === street.id);
-    if (comp) {
-      setNoteText(comp.note ?? '');
-      setHangerCount(comp.hangerCount != null ? String(comp.hangerCount) : '');
-      setEditModal({ street, comp });
-    } else {
-      setHangerCount('');
-      setNoteText('');
-      setCompleteModal(street);
+  // ── Drop pin ─────────────────────────────────────────
+  async function handleDropPin() {
+    if (!worker || !selectedZone) return;
+    if (!activeShift) {
+      Alert.alert('Start your shift first', 'Tap "Start Shift" before dropping pins.');
+      return;
+    }
+    setDropping(true);
+    try {
+      // Take photo first
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.7,
+      });
+      if (result.canceled) { setDropping(false); return; }
+
+      const photoUri = result.assets[0].uri;
+      const lat = userLat ?? selectedZone.centerLat;
+      const lng = userLng ?? selectedZone.centerLng;
+
+      const pin: YardSign = {
+        id: `pin-${Date.now()}`,
+        workerId: worker.id,
+        workerName: worker.name,
+        zoneId: selectedZone.id,
+        shiftId: activeShift.id,
+        lat, lng,
+        placedAt: new Date().toISOString(),
+        photoUri,
+        address: currentStreet ?? undefined,
+      };
+
+      await saveYardSign(pin);
+      setPins(await getYardSigns(selectedZone.id));
+    } finally {
+      setDropping(false);
     }
   }
 
-  async function handleConfirmComplete() {
-    if (!worker || !completeModal || !selectedZone) return;
-    const count = hangerCount.trim() ? parseInt(hangerCount) : undefined;
-    await markStreetComplete(completeModal.id, worker, count, noteText);
-    setCompletions(await getCompletions(selectedZone.id));
-    setCompleteModal(null);
-  }
-
-  async function handleSaveEdit() {
-    if (!editModal || !selectedZone) return;
-    const count = hangerCount.trim() ? parseInt(hangerCount) : undefined;
-    await updateCompletion(editModal.street.id, {
-      note: noteText.trim() || undefined,
-      hangerCount: count,
-    });
-    setCompletions(await getCompletions(selectedZone.id));
-    setEditModal(null);
-  }
-
-  async function handleUnmark() {
-    if (!editModal || !selectedZone) return;
-    await unmarkStreetComplete(editModal.street.id);
-    setCompletions(await getCompletions(selectedZone.id));
-    setEditModal(null);
-  }
-
-  // ── Yard signs ───────────────────────────────────────
-  function handleMapPress(lat: number, lng: number) {
-    if (mapMode !== 'placeSign') return;
-    setSignPhoto(null);
-    setSignModal({ lat, lng });
-    setMapMode('navigate');
-  }
-
-  async function pickSignPhoto() {
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setSignPhoto(result.assets[0].uri);
-    }
-  }
-
-  async function pickSignPhotoFromLibrary() {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setSignPhoto(result.assets[0].uri);
-    }
-  }
-
-  async function handleSaveSign() {
-    if (!signModal || !worker || !selectedZone) return;
-    const sign: YardSign = {
-      id: `sign-${Date.now()}`,
-      workerId: worker.id,
-      workerName: worker.name,
-      zoneId: selectedZone.id,
-      lat: signModal.lat,
-      lng: signModal.lng,
-      placedAt: new Date().toISOString(),
-      photoUri: signPhoto ?? undefined,
-    };
-    await saveYardSign(sign);
-    setYardSigns(await getYardSigns(selectedZone.id));
-    setSignModal(null);
-    setSignPhoto(null);
-  }
-
-  async function handleDeleteSign(sign: YardSign) {
-    Alert.alert('Remove Sign', 'Remove this yard sign pin?', [
+  async function handleDeletePin(pin: YardSign) {
+    Alert.alert('Remove Pin', 'Remove this door hanger pin?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove', style: 'destructive', onPress: async () => {
-          await deleteYardSign(sign.id);
-          setYardSigns(await getYardSigns(selectedZone!.id));
-          setViewSignModal(null);
+          await deleteYardSign(pin.id);
+          setPins(await getYardSigns(selectedZone!.id));
+          setViewPin(null);
         },
       },
     ]);
-  }
-
-  // ── Sheet ────────────────────────────────────────────
-  function toggleSheet() {
-    const toValue = sheetOpen ? 0 : 1;
-    setSheetOpen(!sheetOpen);
-    Animated.spring(sheetAnim, { toValue, useNativeDriver: false, tension: 80, friction: 13 }).start();
   }
 
   async function handleLogout() {
@@ -269,21 +182,15 @@ export default function WorkerScreen() {
     router.replace('/');
   }
 
-  const isComplete = (s: Street) => completions.some(c => c.streetId === s.id);
-  const currentStreetObj = streets.find(s => currentStreet && s.name.toLowerCase() === currentStreet.toLowerCase());
-  const done = streets.filter(s => isComplete(s));
-  const pending = streets.filter(s => !isComplete(s));
-  const pct = streets.length > 0 ? Math.round((done.length / streets.length) * 100) : 0;
-  const totalHangers = completions.reduce((a, c) => a + (c.hangerCount ?? 0), 0);
-
-  const SHEET_HEIGHT = 340;
+  const shiftPins = activeShift ? pins.filter(p => p.shiftId === activeShift.id) : [];
+  const totalPins = pins.length;
 
   if (!worker) {
-    return <View style={styles.loading}><ActivityIndicator size="large" color="#3B82F6" /></View>;
+    return <View style={s.loading}><ActivityIndicator color="#fff" /></View>;
   }
 
   return (
-    <View style={styles.root}>
+    <View style={s.root}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       {/* MAP */}
@@ -292,369 +199,168 @@ export default function WorkerScreen() {
           centerLat={selectedZone.centerLat}
           centerLng={selectedZone.centerLng}
           streets={streets}
-          completions={completions}
-          yardSigns={yardSigns}
+          completions={[]}
+          yardSigns={pins}
           userLat={userLat}
           userLng={userLng}
           mapType={mapType}
-          placingSign={mapMode === 'placeSign'}
-          onStreetPress={handleStreetPress}
-          onMapPress={handleMapPress}
-          onYardSignPress={setViewSignModal}
+          placingSign={false}
+          onStreetPress={() => {}}
+          onMapPress={() => {}}
+          onYardSignPress={setViewPin}
         />
       ) : (
-        <View style={styles.emptyMap}>
-          <Text style={styles.emptyIcon}>🗺️</Text>
-          <Text style={styles.emptyTitle}>No zones assigned</Text>
-          <Text style={styles.emptySub}>Ask your manager to create a zone.</Text>
+        <View style={s.emptyMap}>
+          <Text style={s.emptyIcon}>🗺️</Text>
+          <Text style={s.emptyTitle}>No zones assigned</Text>
+          <Text style={s.emptySub}>Ask your manager to create a zone.</Text>
         </View>
       )}
 
       {/* ── TOP BAR ── */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <View style={styles.topLeft}>
-          <Text style={styles.topName}>{worker.name}</Text>
-          {selectedZone && <Text style={styles.topZone} numberOfLines={1}>{selectedZone.name}</Text>}
+      <View style={[s.topBar, { paddingTop: insets.top + 8 }]}>
+        <View style={s.topLeft}>
+          <Text style={s.topName}>{worker.name}</Text>
+          {selectedZone && <Text style={s.topZone} numberOfLines={1}>{selectedZone.name}</Text>}
         </View>
-        <View style={styles.topRight}>
+        <View style={s.topRight}>
           {selectedZone && (
-            <TouchableOpacity style={styles.iconBtn} onPress={() => setMapType(t => t === 'dark' ? 'satellite' : 'dark')}>
-              <Text style={styles.iconBtnText}>{mapType === 'dark' ? '🛰' : '🗺'}</Text>
+            <TouchableOpacity style={s.iconBtn} onPress={() => setMapType(t => t === 'dark' ? 'satellite' : 'dark')}>
+              <Text style={s.iconBtnText}>{mapType === 'dark' ? '🛰' : '🗺'}</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.exitBtn} onPress={handleLogout}>
-            <Text style={styles.exitText}>Exit</Text>
+          {zones.length > 1 && zones.map(z => (
+            <TouchableOpacity
+              key={z.id}
+              style={[s.zoneChip, selectedZone?.id === z.id && s.zoneChipActive]}
+              onPress={() => selectZone(z)}
+            >
+              <Text style={[s.zoneChipText, selectedZone?.id === z.id && s.zoneChipTextActive]}>{z.name}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity style={s.exitBtn} onPress={handleLogout}>
+            <Text style={s.exitText}>Exit</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* ── SHIFT TIMER BAR ── */}
+      {/* ── SHIFT BAR ── */}
       {selectedZone && (
-        <View style={[styles.shiftBar, { top: insets.top + 60 }]}>
+        <View style={[s.shiftBar, { top: insets.top + 60 }]}>
           {activeShift ? (
             <>
-              <View style={styles.shiftActive}>
-                <View style={styles.shiftDot} />
-                <Text style={styles.shiftTime}>{formatTime(shiftSeconds)}</Text>
-                <Text style={styles.shiftLabel}> on shift</Text>
+              <View style={s.shiftLeft}>
+                <View style={s.shiftDot} />
+                <Text style={s.shiftTime}>{formatTime(shiftSeconds)}</Text>
+                <Text style={s.shiftLabel}>  on shift</Text>
               </View>
-              <TouchableOpacity style={styles.shiftEndBtn} onPress={handleEndShift}>
-                <Text style={styles.shiftEndText}>Clock Out</Text>
-              </TouchableOpacity>
+              <View style={s.shiftRight}>
+                <Text style={s.pinCount}>🚪 {shiftPins.length}</Text>
+                <TouchableOpacity style={s.clockOutBtn} onPress={handleEndShift}>
+                  <Text style={s.clockOutText}>Clock Out</Text>
+                </TouchableOpacity>
+              </View>
             </>
           ) : (
-            <TouchableOpacity style={styles.shiftStartBtn} onPress={handleStartShift}>
-              <Text style={styles.shiftStartText}>⏱ Start Shift</Text>
+            <TouchableOpacity style={s.startShiftBtn} onPress={handleStartShift}>
+              <Text style={s.startShiftText}>⏱  Start Shift to Begin</Text>
             </TouchableOpacity>
           )}
         </View>
       )}
 
-      {/* Zone tabs */}
-      {zones.length > 1 && (
-        <View style={[styles.zoneTabsWrap, { top: insets.top + 100 }]}>
-          {zones.map(z => (
-            <TouchableOpacity
-              key={z.id}
-              style={[styles.zoneTab, selectedZone?.id === z.id && styles.zoneTabActive]}
-              onPress={() => selectZone(z)}
-            >
-              <Text style={[styles.zoneTabText, selectedZone?.id === z.id && styles.zoneTabTextActive]}>
-                {z.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+      {/* Current street label */}
+      {currentStreet && (
+        <View style={[s.streetLabel, { bottom: 120 + insets.bottom }]}>
+          <Text style={s.streetLabelText} numberOfLines={1}>📍 {currentStreet}</Text>
         </View>
       )}
 
-      {/* Current street pill */}
-      {currentStreetObj && selectedZone && (
+      {/* ── DROP PIN BUTTON ── */}
+      {selectedZone && (
         <TouchableOpacity
-          style={[styles.currentPill, isComplete(currentStreetObj) ? styles.pillDone : styles.pillActive]}
-          onPress={() => handleStreetPress(currentStreetObj)}
+          style={[s.dropBtn, { bottom: 32 + insets.bottom }, (!activeShift || dropping) && s.dropBtnDim]}
+          onPress={handleDropPin}
+          disabled={dropping || !activeShift}
           activeOpacity={0.85}
         >
-          <View style={[styles.pillDot, isComplete(currentStreetObj) && styles.pillDotDone]} />
-          <View style={styles.pillMid}>
-            <Text style={styles.pillLabel}>YOU ARE ON</Text>
-            <Text style={styles.pillStreet} numberOfLines={1}>{currentStreetObj.name}</Text>
-          </View>
-          {isComplete(currentStreetObj)
-            ? <View style={styles.doneBadge}><Text style={styles.doneBadgeText}>✓ Done</Text></View>
-            : <View style={styles.tapBadge}><Text style={styles.tapBadgeText}>Mark ✓</Text></View>
+          {dropping
+            ? <ActivityIndicator color="#000" />
+            : <>
+                <Text style={s.dropBtnIcon}>📷</Text>
+                <Text style={s.dropBtnText}>Drop Pin</Text>
+              </>
           }
         </TouchableOpacity>
       )}
 
-      {/* Place sign FAB */}
-      {selectedZone && (
+      {/* Pin count / list toggle */}
+      {selectedZone && totalPins > 0 && (
         <TouchableOpacity
-          style={[styles.fab, mapMode === 'placeSign' && styles.fabActive]}
-          onPress={() => setMapMode(m => m === 'placeSign' ? 'navigate' : 'placeSign')}
-          activeOpacity={0.85}
+          style={[s.pinListBtn, { bottom: 32 + insets.bottom }]}
+          onPress={() => setListOpen(true)}
         >
-          <Text style={styles.fabIcon}>🪧</Text>
-          <Text style={styles.fabLabel}>{mapMode === 'placeSign' ? 'Cancel' : 'Sign'}</Text>
+          <Text style={s.pinListCount}>{totalPins}</Text>
+          <Text style={s.pinListLabel}>pins</Text>
         </TouchableOpacity>
       )}
 
-      {/* ── BOTTOM SHEET ── */}
-      {selectedZone && (
-        <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
-          <TouchableOpacity style={styles.sheetHandle} onPress={toggleSheet} activeOpacity={0.9}>
-            <View style={styles.handleBar} />
-            <View style={styles.progressRow}>
-              <View style={styles.progressLeft}>
-                <Text style={styles.progressDone}>{done.length}</Text>
-                <Text style={styles.progressOf}>/{streets.length}</Text>
-                <Text style={styles.progressLabel}> streets</Text>
-                {totalHangers > 0 && (
-                  <Text style={styles.hangerStat}>  ·  🚪 {totalHangers} hangers</Text>
-                )}
-              </View>
-              <View style={styles.progressRight}>
-                <Text style={styles.pctText}>{pct}%</Text>
-                <Text style={styles.chevron}>{sheetOpen ? ' ▼' : ' ▲'}</Text>
-              </View>
-            </View>
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${pct}%` as any }]} />
-            </View>
-          </TouchableOpacity>
-
-          <Animated.View style={[styles.sheetContent, {
-            maxHeight: sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0, SHEET_HEIGHT] }),
-          }]}>
-            {/* Tabs */}
-            <View style={styles.tabs}>
-              <TouchableOpacity style={[styles.tab, sheetTab === 'streets' && styles.tabActive]} onPress={() => setSheetTab('streets')}>
-                <Text style={[styles.tabText, sheetTab === 'streets' && styles.tabTextActive]}>Streets ({streets.length})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.tab, sheetTab === 'signs' && styles.tabActive]} onPress={() => setSheetTab('signs')}>
-                <Text style={[styles.tabText, sheetTab === 'signs' && styles.tabTextActive]}>🪧 Signs ({yardSigns.length})</Text>
+      {/* ── PIN LIST MODAL ── */}
+      <Modal visible={listOpen} animationType="slide" transparent statusBarTranslucent>
+        <View style={s.listModalBg}>
+          <View style={[s.listModal, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.listModalHandle} />
+            <View style={s.listModalHeader}>
+              <Text style={s.listModalTitle}>All Pins ({totalPins})</Text>
+              <TouchableOpacity onPress={() => setListOpen(false)}>
+                <Text style={s.listModalClose}>Done</Text>
               </TouchableOpacity>
             </View>
-
-            {sheetTab === 'streets' ? (
-              <FlatList
-                data={[...pending, ...done]}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
-                renderItem={({ item }) => {
-                  const complete = isComplete(item);
-                  const comp = completions.find(c => c.streetId === item.id);
-                  const isCurrent = currentStreet?.toLowerCase() === item.name.toLowerCase();
-                  return (
-                    <TouchableOpacity
-                      style={[styles.streetRow, complete && styles.streetRowDone, isCurrent && styles.streetRowCurrent]}
-                      onPress={() => handleStreetPress(item)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.streetLeft}>
-                        <Text style={[styles.streetName, complete && styles.streetNameDone]} numberOfLines={1}>
-                          {isCurrent ? '📍 ' : ''}{item.name}
-                        </Text>
-                        <View style={styles.streetMeta}>
-                          {comp?.hangerCount != null && (
-                            <Text style={styles.metaChip}>🚪 {comp.hangerCount}</Text>
-                          )}
-                          {comp?.note && (
-                            <Text style={styles.metaNote} numberOfLines={1}>💬 {comp.note}</Text>
-                          )}
-                          {complete && !comp?.note && !comp?.hangerCount && (
-                            <Text style={styles.tapEdit}>tap to edit</Text>
-                          )}
-                        </View>
-                      </View>
-                      <View style={[styles.streetBadge, complete ? styles.badgeDone : styles.badgePending]}>
-                        <Text style={[styles.badgeText, complete ? styles.badgeTextDone : styles.badgeTextPending]}>
-                          {complete ? '✓' : '○'}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                }}
-              />
-            ) : (
-              <FlatList
-                data={yardSigns}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
-                ListEmptyComponent={
-                  <View style={styles.signsEmpty}>
-                    <Text style={styles.signsEmptyText}>No yard signs placed yet.</Text>
-                    <Text style={styles.signsEmptyHint}>Tap 🪧 Sign on the map to place one.</Text>
+            <FlatList
+              data={[...pins].reverse()}
+              keyExtractor={item => item.id}
+              contentContainerStyle={{ paddingBottom: 16 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity style={s.pinRow} onPress={() => { setListOpen(false); setViewPin(item); }} activeOpacity={0.7}>
+                  {item.photoUri
+                    ? <Image source={{ uri: item.photoUri }} style={s.pinThumb} />
+                    : <View style={s.pinThumbEmpty}><Text>📍</Text></View>
+                  }
+                  <View style={s.pinRowInfo}>
+                    <Text style={s.pinRowAddress}>{item.address ?? 'Unknown street'}</Text>
+                    <Text style={s.pinRowMeta}>
+                      {item.workerName} · {new Date(item.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
                   </View>
-                }
-                renderItem={({ item }) => (
-                  <TouchableOpacity style={styles.signRow} onPress={() => setViewSignModal(item)} activeOpacity={0.7}>
-                    {item.photoUri ? (
-                      <Image source={{ uri: item.photoUri }} style={styles.signThumb} />
-                    ) : (
-                      <View style={styles.signThumbEmpty}><Text>🪧</Text></View>
-                    )}
-                    <View style={styles.signInfo}>
-                      <Text style={styles.signWorker}>{item.workerName}</Text>
-                      <Text style={styles.signTime}>
-                        {new Date(item.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </Text>
-                    </View>
-                    <Text style={styles.signArrow}>›</Text>
-                  </TouchableOpacity>
-                )}
-              />
-            )}
-          </Animated.View>
-        </View>
-      )}
-
-      {/* ── MARK DONE MODAL ── */}
-      <Modal visible={!!completeModal} transparent animationType="slide" statusBarTranslucent>
-        <KeyboardAvoidingView style={styles.modalBg} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>{completeModal?.name}</Text>
-            <Text style={styles.modalSub}>Mark this street as complete</Text>
-
-            <Text style={styles.fieldLabel}>DOOR HANGERS PLACED</Text>
-            <TextInput
-              style={styles.fieldInput}
-              placeholder="0"
-              placeholderTextColor="#475569"
-              value={hangerCount}
-              onChangeText={setHangerCount}
-              keyboardType="number-pad"
-              selectionColor="#3B82F6"
-            />
-
-            <Text style={styles.fieldLabel}>NOTE (OPTIONAL)</Text>
-            <TextInput
-              style={[styles.fieldInput, styles.fieldMulti]}
-              placeholder="e.g. skipped gated houses..."
-              placeholderTextColor="#475569"
-              value={noteText}
-              onChangeText={setNoteText}
-              multiline
-              selectionColor="#3B82F6"
-            />
-
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setCompleteModal(null)}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirmComplete}>
-                <Text style={styles.confirmText}>✓ Mark Done</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* ── EDIT DONE STREET MODAL ── */}
-      <Modal visible={!!editModal} transparent animationType="slide" statusBarTranslucent>
-        <KeyboardAvoidingView style={styles.modalBg} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>{editModal?.street.name}</Text>
-            <Text style={styles.modalSub}>Edit details for this street</Text>
-
-            <Text style={styles.fieldLabel}>DOOR HANGERS PLACED</Text>
-            <TextInput
-              style={styles.fieldInput}
-              placeholder="0"
-              placeholderTextColor="#475569"
-              value={hangerCount}
-              onChangeText={setHangerCount}
-              keyboardType="number-pad"
-              selectionColor="#3B82F6"
-            />
-
-            <Text style={styles.fieldLabel}>NOTE</Text>
-            <TextInput
-              style={[styles.fieldInput, styles.fieldMulti]}
-              placeholder="Add a note..."
-              placeholderTextColor="#475569"
-              value={noteText}
-              onChangeText={setNoteText}
-              multiline
-              selectionColor="#3B82F6"
-            />
-
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.unmarkBtn} onPress={handleUnmark}>
-                <Text style={styles.unmarkText}>Unmark</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmBtn} onPress={handleSaveEdit}>
-                <Text style={styles.confirmText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity style={styles.cancelRow} onPress={() => setEditModal(null)}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* ── PLACE SIGN MODAL ── */}
-      <Modal visible={!!signModal} transparent animationType="slide" statusBarTranslucent>
-        <View style={styles.modalBg}>
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Place Yard Sign 🪧</Text>
-            <Text style={styles.modalSub}>Attach a photo of the sign you placed</Text>
-
-            <TouchableOpacity style={styles.photoBox} onPress={pickSignPhoto}>
-              {signPhoto ? (
-                <Image source={{ uri: signPhoto }} style={styles.photoPreview} resizeMode="cover" />
-              ) : (
-                <View style={styles.photoPlaceholder}>
-                  <Text style={styles.photoIcon}>📷</Text>
-                  <Text style={styles.photoHint}>Tap to take photo</Text>
-                </View>
+                  <Text style={s.pinRowArrow}>›</Text>
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.libraryBtn} onPress={pickSignPhotoFromLibrary}>
-              <Text style={styles.libraryBtnText}>Choose from library</Text>
-            </TouchableOpacity>
-
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => { setSignModal(null); setSignPhoto(null); }}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmBtn} onPress={handleSaveSign}>
-                <Text style={styles.confirmText}>Save Sign</Text>
-              </TouchableOpacity>
-            </View>
+            />
           </View>
         </View>
       </Modal>
 
-      {/* ── VIEW SIGN MODAL ── */}
-      <Modal visible={!!viewSignModal} transparent animationType="slide" statusBarTranslucent>
-        <View style={styles.modalBg}>
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Yard Sign 🪧</Text>
-            <Text style={styles.modalSub}>
-              Placed by {viewSignModal?.workerName} at{' '}
-              {viewSignModal && new Date(viewSignModal.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      {/* ── VIEW PIN MODAL ── */}
+      <Modal visible={!!viewPin} animationType="slide" transparent statusBarTranslucent>
+        <View style={s.pinModalBg}>
+          <View style={[s.pinModal, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.listModalHandle} />
+            <Text style={s.pinModalStreet}>{viewPin?.address ?? 'Unknown street'}</Text>
+            <Text style={s.pinModalMeta}>
+              {viewPin?.workerName} · {viewPin && new Date(viewPin.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </Text>
 
-            {viewSignModal?.photoUri ? (
-              <Image source={{ uri: viewSignModal.photoUri }} style={styles.signFullPhoto} resizeMode="cover" />
-            ) : (
-              <View style={styles.signNoPhoto}><Text style={styles.signNoPhotoText}>No photo attached</Text></View>
-            )}
+            {viewPin?.photoUri
+              ? <Image source={{ uri: viewPin.photoUri }} style={s.pinModalPhoto} resizeMode="cover" />
+              : <View style={s.pinModalNoPhoto}><Text style={s.noPhotoText}>No photo</Text></View>
+            }
 
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.unmarkBtn} onPress={() => viewSignModal && handleDeleteSign(viewSignModal)}>
-                <Text style={styles.unmarkText}>Remove Pin</Text>
+            <View style={s.pinModalBtns}>
+              <TouchableOpacity style={s.removeBtn} onPress={() => viewPin && handleDeletePin(viewPin)}>
+                <Text style={s.removeBtnText}>Remove Pin</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmBtn} onPress={() => setViewSignModal(null)}>
-                <Text style={styles.confirmText}>Close</Text>
+              <TouchableOpacity style={s.closeBtn} onPress={() => setViewPin(null)}>
+                <Text style={s.closeBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -664,13 +370,13 @@ export default function WorkerScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
-  emptyMap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyIcon: { fontSize: 52, marginBottom: 12 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#F1F5F9' },
-  emptySub: { fontSize: 14, color: '#475569', marginTop: 6 },
+  emptyMap: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
+  emptyIcon: { fontSize: 48, marginBottom: 12 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#fff' },
+  emptySub: { fontSize: 13, color: '#444', marginTop: 4 },
 
   // TOP BAR
   topBar: {
@@ -679,137 +385,96 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingBottom: 10,
   },
   topLeft: { flex: 1, marginRight: 8 },
-  topName: { fontSize: 16, fontWeight: '800', color: '#F1F5F9', textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
-  topZone: { fontSize: 12, color: '#94A3B8', marginTop: 1 },
+  topName: { fontSize: 15, fontWeight: '800', color: '#fff', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  topZone: { fontSize: 11, color: '#888', marginTop: 1 },
   topRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  iconBtn: { backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 20, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#222' },
+  iconBtn: { backgroundColor: 'rgba(0,0,0,0.8)', borderRadius: 20, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#222' },
   iconBtnText: { fontSize: 16 },
-  exitBtn: { backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)' },
+  zoneChip: { backgroundColor: 'rgba(0,0,0,0.8)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: '#222' },
+  zoneChipActive: { backgroundColor: '#fff', borderColor: '#fff' },
+  zoneChipText: { fontSize: 11, color: '#666', fontWeight: '600' },
+  zoneChipTextActive: { color: '#000' },
+  exitBtn: { backgroundColor: 'rgba(239,68,68,0.12)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)' },
   exitText: { color: '#EF4444', fontSize: 12, fontWeight: '700' },
 
   // SHIFT BAR
   shiftBar: {
     position: 'absolute', left: 14, right: 14, zIndex: 25,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'rgba(0,0,0,0.9)', borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 9,
-    borderWidth: 1, borderColor: '#222',
+    backgroundColor: 'rgba(0,0,0,0.88)', borderRadius: 14,
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderWidth: 1, borderColor: '#1a1a1a',
   },
-  shiftActive: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  shiftDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4ADE80' },
-  shiftTime: { fontSize: 16, fontWeight: '800', color: '#F1F5F9' },
-  shiftLabel: { fontSize: 12, color: '#64748B' },
-  shiftEndBtn: { backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)' },
-  shiftEndText: { color: '#EF4444', fontSize: 12, fontWeight: '700' },
-  shiftStartBtn: { flex: 1, alignItems: 'center' },
-  shiftStartText: { color: '#60A5FA', fontSize: 14, fontWeight: '700' },
+  shiftLeft: { flexDirection: 'row', alignItems: 'center' },
+  shiftDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4ADE80', marginRight: 8 },
+  shiftTime: { fontSize: 18, fontWeight: '800', color: '#fff' },
+  shiftLabel: { fontSize: 12, color: '#555' },
+  shiftRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  pinCount: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  clockOutBtn: { backgroundColor: 'rgba(239,68,68,0.12)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)' },
+  clockOutText: { color: '#EF4444', fontSize: 12, fontWeight: '700' },
+  startShiftBtn: { flex: 1, alignItems: 'center' },
+  startShiftText: { color: '#3B82F6', fontSize: 15, fontWeight: '700' },
 
-  // ZONE TABS
-  zoneTabsWrap: { position: 'absolute', left: 14, right: 14, zIndex: 25, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  zoneTab: { backgroundColor: 'rgba(0,0,0,0.85)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: '#222' },
-  zoneTabActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
-  zoneTabText: { fontSize: 12, color: '#64748B', fontWeight: '600' },
-  zoneTabTextActive: { color: '#fff' },
+  // STREET LABEL
+  streetLabel: {
+    position: 'absolute', left: 14, right: 80, zIndex: 20,
+    backgroundColor: 'rgba(0,0,0,0.8)', borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderWidth: 1, borderColor: '#1a1a1a',
+  },
+  streetLabelText: { fontSize: 13, color: '#888', fontWeight: '500' },
 
-  // CURRENT PILL
-  currentPill: { position: 'absolute', bottom: 130, left: 14, right: 60, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.92)', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#222', zIndex: 20, gap: 10 },
-  pillActive: { borderColor: '#2563EB' },
-  pillDone: { borderColor: '#16A34A' },
-  pillDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#3B82F6' },
-  pillDotDone: { backgroundColor: '#4ADE80' },
-  pillMid: { flex: 1 },
-  pillLabel: { fontSize: 9, fontWeight: '800', color: '#3B82F6', letterSpacing: 1.2 },
-  pillStreet: { fontSize: 14, fontWeight: '700', color: '#F1F5F9', marginTop: 1 },
-  doneBadge: { backgroundColor: '#14532D', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  doneBadgeText: { color: '#4ADE80', fontSize: 11, fontWeight: '700' },
-  tapBadge: { backgroundColor: '#172554', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  tapBadgeText: { color: '#60A5FA', fontSize: 11, fontWeight: '700' },
+  // DROP PIN BUTTON
+  dropBtn: {
+    position: 'absolute', left: '50%', zIndex: 30,
+    transform: [{ translateX: -70 }],
+    width: 140, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, backgroundColor: '#fff', borderRadius: 30,
+    paddingVertical: 14, paddingHorizontal: 24,
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  dropBtnDim: { opacity: 0.4 },
+  dropBtnIcon: { fontSize: 20 },
+  dropBtnText: { fontSize: 16, fontWeight: '800', color: '#000' },
 
-  // FAB
-  fab: { position: 'absolute', bottom: 130, right: 14, zIndex: 20, backgroundColor: 'rgba(0,0,0,0.92)', borderRadius: 14, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: '#222', minWidth: 52 },
-  fabActive: { backgroundColor: '#1E3A5F', borderColor: '#2563EB' },
-  fabIcon: { fontSize: 22 },
-  fabLabel: { fontSize: 9, color: '#94A3B8', fontWeight: '700', marginTop: 2 },
+  // PIN COUNT BUTTON
+  pinListBtn: {
+    position: 'absolute', right: 14, zIndex: 30,
+    backgroundColor: 'rgba(0,0,0,0.88)', borderRadius: 14,
+    paddingHorizontal: 14, paddingVertical: 10,
+    alignItems: 'center', borderWidth: 1, borderColor: '#222',
+  },
+  pinListCount: { fontSize: 20, fontWeight: '800', color: '#fff' },
+  pinListLabel: { fontSize: 10, color: '#555', fontWeight: '600' },
 
-  // BOTTOM SHEET
-  sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20, backgroundColor: '#111', borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1, borderColor: '#222', overflow: 'hidden' },
-  sheetHandle: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10 },
-  handleBar: { width: 32, height: 3, backgroundColor: '#222', borderRadius: 2, alignSelf: 'center', marginBottom: 10 },
-  progressRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 },
-  progressLeft: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap' },
-  progressDone: { fontSize: 22, fontWeight: '800', color: '#F1F5F9' },
-  progressOf: { fontSize: 14, color: '#475569', fontWeight: '600' },
-  progressLabel: { fontSize: 13, color: '#475569' },
-  hangerStat: { fontSize: 12, color: '#64748B' },
-  progressRight: { flexDirection: 'row', alignItems: 'center' },
-  pctText: { fontSize: 16, fontWeight: '800', color: '#60A5FA' },
-  chevron: { fontSize: 11, color: '#475569' },
-  progressTrack: { height: 3, backgroundColor: '#000', borderRadius: 2 },
-  progressFill: { height: 3, backgroundColor: '#3B82F6', borderRadius: 2 },
+  // PIN LIST MODAL
+  listModalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)' },
+  listModal: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%', borderTopWidth: 1, borderColor: '#1a1a1a' },
+  listModalHandle: { width: 32, height: 3, backgroundColor: '#333', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 14 },
+  listModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 8 },
+  listModalTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  listModalClose: { color: '#3B82F6', fontSize: 15, fontWeight: '600' },
+  pinRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1a1a1a', gap: 12 },
+  pinThumb: { width: 48, height: 48, borderRadius: 10 },
+  pinThumbEmpty: { width: 48, height: 48, borderRadius: 10, backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' },
+  pinRowInfo: { flex: 1 },
+  pinRowAddress: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  pinRowMeta: { fontSize: 12, color: '#555', marginTop: 2 },
+  pinRowArrow: { fontSize: 20, color: '#333' },
 
-  sheetContent: { overflow: 'hidden' },
-  tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#000' },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center' },
-  tabActive: { borderBottomWidth: 2, borderBottomColor: '#3B82F6' },
-  tabText: { fontSize: 13, color: '#475569', fontWeight: '600' },
-  tabTextActive: { color: '#60A5FA' },
-
-  listContent: { paddingBottom: 8 },
-  streetRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#000' },
-  streetRowDone: { backgroundColor: 'rgba(10,26,14,0.2)' },
-  streetRowCurrent: { backgroundColor: 'rgba(10,15,40,0.4)' },
-  streetLeft: { flex: 1, marginRight: 10 },
-  streetName: { fontSize: 14, fontWeight: '600', color: '#CBD5E1' },
-  streetNameDone: { color: '#4ADE80' },
-  streetMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' },
-  metaChip: { fontSize: 11, color: '#64748B' },
-  metaNote: { fontSize: 11, color: '#475569', flex: 1 },
-  tapEdit: { fontSize: 11, color: '#222' },
-  streetBadge: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  badgeDone: { backgroundColor: '#14532D' },
-  badgePending: { backgroundColor: '#000' },
-  badgeText: { fontSize: 13, fontWeight: '700' },
-  badgeTextDone: { color: '#4ADE80' },
-  badgeTextPending: { color: '#111' },
-
-  signRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#000', gap: 12 },
-  signThumb: { width: 44, height: 44, borderRadius: 8 },
-  signThumbEmpty: { width: 44, height: 44, borderRadius: 8, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-  signInfo: { flex: 1 },
-  signWorker: { fontSize: 13, fontWeight: '600', color: '#CBD5E1' },
-  signTime: { fontSize: 11, color: '#475569', marginTop: 2 },
-  signArrow: { fontSize: 20, color: '#222' },
-  signsEmpty: { padding: 32, alignItems: 'center' },
-  signsEmptyText: { fontSize: 14, color: '#475569', fontWeight: '600' },
-  signsEmptyHint: { fontSize: 12, color: '#222', marginTop: 4 },
-
-  // MODALS
-  modalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.75)' },
-  modalCard: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderTopWidth: 1, borderColor: '#222' },
-  modalHandle: { width: 32, height: 3, backgroundColor: '#222', borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#F1F5F9', marginBottom: 4 },
-  modalSub: { fontSize: 13, color: '#475569', marginBottom: 18 },
-  fieldLabel: { fontSize: 10, fontWeight: '800', color: '#475569', letterSpacing: 1, marginBottom: 6 },
-  fieldInput: { backgroundColor: '#000', borderWidth: 1.5, borderColor: '#222', borderRadius: 10, padding: 13, fontSize: 15, color: '#F1F5F9', marginBottom: 14 },
-  fieldMulti: { minHeight: 64, textAlignVertical: 'top' },
-  modalBtns: { flexDirection: 'row', gap: 10, marginTop: 4 },
-  cancelBtn: { flex: 1, borderWidth: 1.5, borderColor: '#222', borderRadius: 12, padding: 14, alignItems: 'center' },
-  cancelText: { color: '#64748B', fontWeight: '600', fontSize: 14 },
-  cancelRow: { alignItems: 'center', paddingTop: 12 },
-  unmarkBtn: { flex: 1, borderWidth: 1.5, borderColor: '#EF4444', borderRadius: 12, padding: 14, alignItems: 'center' },
-  unmarkText: { color: '#EF4444', fontWeight: '700', fontSize: 14 },
-  confirmBtn: { flex: 2, backgroundColor: '#2563EB', borderRadius: 12, padding: 14, alignItems: 'center' },
-  confirmText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-
-  photoBox: { height: 160, borderRadius: 12, overflow: 'hidden', marginBottom: 10, borderWidth: 1.5, borderColor: '#222' },
-  photoPreview: { width: '100%', height: '100%' },
-  photoPlaceholder: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  photoIcon: { fontSize: 36 },
-  photoHint: { fontSize: 13, color: '#475569' },
-  libraryBtn: { alignItems: 'center', paddingVertical: 10, marginBottom: 4 },
-  libraryBtnText: { color: '#3B82F6', fontSize: 13, fontWeight: '600' },
-
-  signFullPhoto: { width: '100%', height: 200, borderRadius: 12, marginBottom: 16 },
-  signNoPhoto: { height: 80, backgroundColor: '#000', borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  signNoPhotoText: { color: '#222', fontSize: 13 },
+  // VIEW PIN MODAL
+  pinModalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.8)' },
+  pinModal: { backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderTopWidth: 1, borderColor: '#1a1a1a' },
+  pinModalStreet: { fontSize: 18, fontWeight: '700', color: '#fff', marginBottom: 4 },
+  pinModalMeta: { fontSize: 13, color: '#555', marginBottom: 16 },
+  pinModalPhoto: { width: '100%', height: 220, borderRadius: 14, marginBottom: 16 },
+  pinModalNoPhoto: { height: 80, backgroundColor: '#1a1a1a', borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  noPhotoText: { color: '#333', fontSize: 13 },
+  pinModalBtns: { flexDirection: 'row', gap: 10 },
+  removeBtn: { flex: 1, borderWidth: 1, borderColor: '#EF4444', borderRadius: 12, padding: 14, alignItems: 'center' },
+  removeBtnText: { color: '#EF4444', fontWeight: '700', fontSize: 14 },
+  closeBtn: { flex: 2, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center' },
+  closeBtnText: { color: '#000', fontWeight: '800', fontSize: 14 },
 });

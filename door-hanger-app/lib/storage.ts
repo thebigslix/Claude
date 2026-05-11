@@ -47,17 +47,21 @@ export type ShiftSession = {
   endLng?: number;
 };
 
-export type YardSign = {
+export type HangerPin = {
   id: string;
   workerId: string;
   workerName: string;
   zoneId: string;
+  shiftId?: string;
   lat: number;
   lng: number;
   placedAt: string;
   photoUri?: string;
   address?: string;
 };
+
+// Keep YardSign as alias for backwards compat
+export type YardSign = HangerPin;
 
 const KEYS = {
   currentWorker: 'current_worker',
