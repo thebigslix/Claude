@@ -26,8 +26,7 @@ export default function ZoneDetailScreen() {
     setZone(z);
     if (z) {
       const [s, c, signs, allShifts] = await Promise.all([
-        getStreets(z.id), getCompletions(z.id),
-        getYardSigns(z.id), getShifts(),
+        getStreets(z.id), getCompletions(z.id), getYardSigns(z.id), getShifts(),
       ]);
       setStreets(s);
       setCompletions(c);
@@ -39,7 +38,6 @@ export default function ZoneDetailScreen() {
 
   const isComplete = (s: Street) => completions.some(c => c.streetId === s.id);
   const completionFor = (s: Street) => completions.find(c => c.streetId === s.id);
-
   const done = streets.filter(s => isComplete(s));
   const pending = streets.filter(s => !isComplete(s));
   const pct = streets.length > 0 ? Math.round((done.length / streets.length) * 100) : 0;
@@ -55,40 +53,33 @@ export default function ZoneDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.title} numberOfLines={1}>{zone?.name ?? 'Zone'}</Text>
+    <SafeAreaView style={s.root}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.back()}><Text style={s.back}>← Back</Text></TouchableOpacity>
+        <Text style={s.title} numberOfLines={1}>{zone?.name ?? 'Zone'}</Text>
         <View style={{ width: 60 }} />
       </View>
 
       {loading ? (
-        <View style={styles.center}><ActivityIndicator size="large" color="#3B82F6" /></View>
+        <View style={s.center}><ActivityIndicator color="#fff" /></View>
       ) : (
         <>
-          <View style={styles.summary}>
-            <View style={styles.summaryStats}>
-              <SummaryStat label="Streets" value={streets.length} />
-              <SummaryStat label="Done" value={done.length} color="#4ADE80" />
-              <SummaryStat label="Hangers" value={totalHangers} color="#FBBF24" />
-              <SummaryStat label="%" value={pct} color="#60A5FA" suffix="%" />
+          <View style={s.summary}>
+            <View style={s.summaryRow}>
+              <Stat label="Streets" value={streets.length} />
+              <Stat label="Done" value={done.length} color="#4ADE80" />
+              <Stat label="Hangers" value={totalHangers} color="#FBBF24" />
+              <Stat label="Complete" value={pct} color="#3B82F6" suffix="%" />
             </View>
-            <View style={styles.summaryRow2}>
-              <Text style={styles.summaryExtra}>🪧 {yardSigns.length} signs placed  ·  ⏱ {shifts.length} shifts logged</Text>
-            </View>
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${pct}%` as any }]} />
-            </View>
+            <Text style={s.summaryExtra}>🪧 {yardSigns.length} signs  ·  ⏱ {shifts.length} shifts</Text>
+            <View style={s.track}><View style={[s.fill, { width: `${pct}%` as any }]} /></View>
           </View>
 
-          {/* Tabs */}
-          <View style={styles.tabs}>
+          <View style={s.tabs}>
             {(['streets', 'signs', 'shifts'] as const).map(t => (
-              <TouchableOpacity key={t} style={[styles.tabBtn, tab === t && styles.tabBtnActive]} onPress={() => setTab(t)}>
-                <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                  {t === 'streets' ? `Streets` : t === 'signs' ? `🪧 Signs` : `⏱ Shifts`}
+              <TouchableOpacity key={t} style={[s.tab, tab === t && s.tabActive]} onPress={() => setTab(t)}>
+                <Text style={[s.tabText, tab === t && s.tabTextActive]}>
+                  {t === 'streets' ? 'Streets' : t === 'signs' ? '🪧 Signs' : '⏱ Shifts'}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -96,10 +87,10 @@ export default function ZoneDetailScreen() {
 
           {tab === 'streets' && (
             <>
-              <View style={styles.filterRow}>
+              <View style={s.filterRow}>
                 {(['all', 'pending', 'done'] as const).map(f => (
-                  <TouchableOpacity key={f} style={[styles.filterChip, filter === f && styles.filterChipActive]} onPress={() => setFilter(f)}>
-                    <Text style={[styles.filterChipText, filter === f && styles.filterChipTextActive]}>
+                  <TouchableOpacity key={f} style={[s.chip, filter === f && s.chipActive]} onPress={() => setFilter(f)}>
+                    <Text style={[s.chipText, filter === f && s.chipTextActive]}>
                       {f === 'all' ? `All (${streets.length})` : f === 'done' ? `Done (${done.length})` : `Pending (${pending.length})`}
                     </Text>
                   </TouchableOpacity>
@@ -108,27 +99,18 @@ export default function ZoneDetailScreen() {
               <FlatList
                 data={filtered}
                 keyExtractor={item => item.id}
-                contentContainerStyle={styles.list}
+                contentContainerStyle={s.list}
                 renderItem={({ item }) => {
                   const completed = isComplete(item);
                   const comp = completionFor(item);
                   return (
-                    <View style={[styles.row, completed && styles.rowDone]}>
-                      <View style={styles.rowLeft}>
-                        <Text style={[styles.streetName, completed && styles.streetNameDone]}>{item.name}</Text>
-                        {comp && (
-                          <Text style={styles.meta}>
-                            {comp.workerName} · {new Date(comp.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            {comp.hangerCount != null ? `  ·  🚪 ${comp.hangerCount}` : ''}
-                          </Text>
-                        )}
-                        {comp?.note && <Text style={styles.noteText}>💬 {comp.note}</Text>}
+                    <View style={[s.row, completed && s.rowDone]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[s.streetName, completed && s.streetDone]}>{item.name}</Text>
+                        {comp && <Text style={s.meta}>{comp.workerName}{comp.hangerCount != null ? `  ·  🚪 ${comp.hangerCount}` : ''}</Text>}
+                        {comp?.note && <Text style={s.note}>💬 {comp.note}</Text>}
                       </View>
-                      <View style={[styles.badge, completed ? styles.badgeDone : styles.badgePending]}>
-                        <Text style={[styles.badgeText, completed ? styles.badgeTextDone : styles.badgeTextPending]}>
-                          {completed ? '✓' : '·'}
-                        </Text>
-                      </View>
+                      <Text style={completed ? s.checkDone : s.checkPending}>{completed ? '✓' : '○'}</Text>
                     </View>
                   );
                 }}
@@ -140,17 +122,13 @@ export default function ZoneDetailScreen() {
             <FlatList
               data={yardSigns}
               keyExtractor={item => item.id}
-              contentContainerStyle={styles.list}
-              ListEmptyComponent={<Text style={styles.emptyText}>No yard signs placed yet.</Text>}
+              contentContainerStyle={s.list}
+              ListEmptyComponent={<Text style={s.empty}>No yard signs placed yet.</Text>}
               renderItem={({ item }) => (
-                <View style={styles.row}>
-                  <View style={styles.rowLeft}>
-                    <Text style={styles.streetName}>🪧 {item.workerName}</Text>
-                    <Text style={styles.meta}>
-                      {new Date(item.placedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      {'  ·  '}{item.lat.toFixed(4)}, {item.lng.toFixed(4)}
-                    </Text>
-                    {item.photoUri && <Text style={styles.noteText}>📷 Photo attached</Text>}
+                <View style={s.row}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.streetName}>🪧 {item.workerName}</Text>
+                    <Text style={s.meta}>{new Date(item.placedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}{item.photoUri ? '  ·  📷 photo' : ''}</Text>
                   </View>
                 </View>
               )}
@@ -161,13 +139,13 @@ export default function ZoneDetailScreen() {
             <FlatList
               data={shifts}
               keyExtractor={item => item.id}
-              contentContainerStyle={styles.list}
-              ListEmptyComponent={<Text style={styles.emptyText}>No shifts logged yet.</Text>}
+              contentContainerStyle={s.list}
+              ListEmptyComponent={<Text style={s.empty}>No shifts logged yet.</Text>}
               renderItem={({ item }) => (
-                <View style={styles.row}>
-                  <View style={styles.rowLeft}>
-                    <Text style={styles.streetName}>{item.workerName}</Text>
-                    <Text style={styles.meta}>
+                <View style={s.row}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.streetName}>{item.workerName}</Text>
+                    <Text style={s.meta}>
                       {new Date(item.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       {item.endTime ? ` → ${new Date(item.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ' (active)'}
                       {'  ·  '}{shiftDuration(item)}
@@ -183,72 +161,44 @@ export default function ZoneDetailScreen() {
   );
 }
 
-function SummaryStat({ label, value, color = '#F1F5F9', suffix = '' }: { label: string; value: number; color?: string; suffix?: string }) {
+function Stat({ label, value, color = '#fff', suffix = '' }: { label: string; value: number; color?: string; suffix?: string }) {
   return (
-    <View style={styles.summaryStat}>
-      <Text style={[styles.summaryNum, { color }]}>{value}{suffix}</Text>
-      <Text style={styles.summaryLabel}>{label}</Text>
+    <View style={{ alignItems: 'center' }}>
+      <Text style={[{ fontSize: 24, fontWeight: '800', color }]}>{value}{suffix}</Text>
+      <Text style={{ fontSize: 11, color: '#444', marginTop: 2 }}>{label}</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#000' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 16, borderBottomWidth: 1, borderBottomColor: '#1E293B',
-  },
-  backBtn: { width: 60 },
-  backText: { color: '#3B82F6', fontSize: 15 },
-  title: { fontSize: 17, fontWeight: '700', color: '#F1F5F9', flex: 1, textAlign: 'center' },
-
-  summary: {
-    margin: 16, backgroundColor: '#1E293B',
-    borderRadius: 14, padding: 16,
-    borderWidth: 1, borderColor: '#334155',
-  },
-  summaryStats: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 14 },
-  summaryStat: { alignItems: 'center' },
-  summaryNum: { fontSize: 26, fontWeight: '800' },
-  summaryLabel: { fontSize: 11, color: '#475569', marginTop: 2 },
-  summaryRow2: { marginBottom: 10 },
-  summaryExtra: { fontSize: 12, color: '#475569', textAlign: 'center' },
-  progressTrack: { height: 4, backgroundColor: '#0F172A', borderRadius: 2 },
-  progressFill: { height: 4, backgroundColor: '#3B82F6', borderRadius: 2 },
-  tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#1E293B', marginBottom: 4 },
-  tabBtn: { flex: 1, paddingVertical: 10, alignItems: 'center' },
-  tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#3B82F6' },
-  tabText: { fontSize: 13, color: '#475569', fontWeight: '600' },
-  tabTextActive: { color: '#60A5FA' },
-  emptyText: { textAlign: 'center', color: '#334155', padding: 32, fontSize: 14 },
-
-  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginBottom: 8 },
-  filterChip: {
-    paddingHorizontal: 14, paddingVertical: 6,
-    borderRadius: 20, borderWidth: 1.5, borderColor: '#334155',
-    backgroundColor: '#1E293B',
-  },
-  filterChipActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
-  filterChipText: { fontSize: 13, color: '#475569', fontWeight: '500' },
-  filterChipTextActive: { color: '#fff', fontWeight: '600' },
-
-  list: { paddingHorizontal: 16, paddingBottom: 24, gap: 8 },
-  row: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#1E293B', borderRadius: 10, padding: 14,
-    borderWidth: 1, borderColor: '#334155',
-  },
-  rowDone: { backgroundColor: '#0D2818', borderColor: '#14532D' },
-  rowLeft: { flex: 1 },
-  streetName: { fontSize: 14, fontWeight: '600', color: '#CBD5E1' },
-  streetNameDone: { color: '#4ADE80' },
-  meta: { fontSize: 11, color: '#475569', marginTop: 3 },
-  noteText: { fontSize: 12, color: '#64748B', marginTop: 3 },
-  badge: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  badgeDone: { backgroundColor: '#14532D' },
-  badgePending: { backgroundColor: '#0F172A' },
-  badgeText: { fontWeight: '700', fontSize: 16 },
-  badgeTextDone: { color: '#4ADE80' },
-  badgeTextPending: { color: '#334155' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#111' },
+  back: { color: '#3B82F6', fontSize: 15, width: 60 },
+  title: { fontSize: 17, fontWeight: '700', color: '#fff', flex: 1, textAlign: 'center' },
+  summary: { margin: 16, backgroundColor: '#111', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#1a1a1a' },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 },
+  summaryExtra: { fontSize: 12, color: '#444', textAlign: 'center', marginBottom: 12 },
+  track: { height: 3, backgroundColor: '#1a1a1a', borderRadius: 2 },
+  fill: { height: 3, backgroundColor: '#3B82F6', borderRadius: 2 },
+  tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#111' },
+  tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
+  tabActive: { borderBottomWidth: 2, borderBottomColor: '#3B82F6' },
+  tabText: { fontSize: 13, color: '#444', fontWeight: '600' },
+  tabTextActive: { color: '#3B82F6' },
+  filterRow: { flexDirection: 'row', gap: 8, padding: 12 },
+  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#222', backgroundColor: '#111' },
+  chipActive: { backgroundColor: '#fff', borderColor: '#fff' },
+  chipText: { fontSize: 12, color: '#555', fontWeight: '600' },
+  chipTextActive: { color: '#000' },
+  list: { paddingHorizontal: 16, paddingBottom: 24, gap: 1 },
+  row: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#111', flexDirection: 'row', alignItems: 'center' },
+  rowDone: { opacity: 0.7 },
+  streetName: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  streetDone: { color: '#4ADE80' },
+  meta: { fontSize: 12, color: '#444', marginTop: 2 },
+  note: { fontSize: 12, color: '#555', marginTop: 2 },
+  checkDone: { color: '#4ADE80', fontWeight: '700', fontSize: 16, marginLeft: 8 },
+  checkPending: { color: '#222', fontWeight: '700', fontSize: 16, marginLeft: 8 },
+  empty: { color: '#333', textAlign: 'center', padding: 32, fontSize: 14 },
 });

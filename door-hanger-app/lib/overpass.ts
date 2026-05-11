@@ -7,9 +7,12 @@ type OverpassElement = {
   geometry?: { lat: number; lon: number }[];
 };
 
-const DRIVEABLE = new Set([
+// All road types workers would cover
+const INCLUDE_HIGHWAY = new Set([
   'residential', 'secondary', 'tertiary', 'unclassified',
-  'primary', 'living_street', 'service',
+  'primary', 'living_street', 'service', 'road',
+  'secondary_link', 'tertiary_link', 'primary_link',
+  'trunk', 'trunk_link',
 ]);
 
 export async function fetchStreetsInRadius(
@@ -19,8 +22,8 @@ export async function fetchStreetsInRadius(
   zoneId: string
 ): Promise<Street[]> {
   const query = `
-    [out:json][timeout:25];
-    way(around:${radiusMeters},${lat},${lng})["highway"]["name"];
+    [out:json][timeout:30];
+    way(around:${radiusMeters},${lat},${lng})["highway"];
     out geom;
   `;
 
@@ -35,39 +38,55 @@ export async function fetchStreetsInRadius(
   const json = await res.json();
   const elements: OverpassElement[] = json.elements ?? [];
 
-  const seen = new Set<string>();
-  const streets: Street[] = [];
+  // Group segments by name (or OSM ID for unnamed roads)
+  const streetMap = new Map<string, { geometry: [number, number][]; osmId: string }>();
 
   for (const el of elements) {
     if (el.type !== 'way') continue;
-    if (!el.tags?.name) continue;
-    if (el.tags.highway && !DRIVEABLE.has(el.tags.highway)) continue;
-
-    const name = el.tags.name;
-    if (seen.has(name)) continue;
-    seen.add(name);
+    const highway = el.tags?.highway;
+    if (!highway || !INCLUDE_HIGHWAY.has(highway)) continue;
 
     const geometry: [number, number][] = (el.geometry ?? []).map(
-      (p) => [p.lat, p.lon] as [number, number]
+      p => [p.lat, p.lon] as [number, number]
     );
+    if (geometry.length < 2) continue;
 
+    // Use name if available, otherwise use highway type + id
+    const name = el.tags?.name ?? `${capitalize(highway)} (${el.id})`;
+    const key = el.tags?.name ?? `osm-${el.id}`;
+
+    if (streetMap.has(key)) {
+      // Append geometry segments for same-named streets
+      streetMap.get(key)!.geometry.push(...geometry);
+    } else {
+      streetMap.set(key, { geometry, osmId: String(el.id) });
+    }
+  }
+
+  const streets: Street[] = [];
+  let idx = 0;
+  for (const [name, data] of streetMap) {
     streets.push({
-      id: `${zoneId}-osm-${el.id}`,
+      id: `${zoneId}-${idx++}`,
       zoneId,
       name,
-      osmId: String(el.id),
-      geometry,
+      osmId: data.osmId,
+      geometry: data.geometry,
     });
   }
 
   return streets;
 }
 
+function capitalize(str: string) {
+  return str.charAt(0).toUpperCase() + str.slice(1).replace(/_/g, ' ');
+}
+
 export async function reverseGeocodeStreet(lat: number, lng: number): Promise<string | null> {
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      { headers: { 'User-Agent': 'StreetTrackerApp/1.0' } }
+      { headers: { 'User-Agent': 'FieldTrackApp/1.0' } }
     );
     const json = await res.json();
     return json.address?.road ?? null;

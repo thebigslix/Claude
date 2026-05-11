@@ -31,7 +31,7 @@ export default function ManagerScreen() {
   }
 
   async function handleDelete(zone: Zone) {
-    Alert.alert('Delete Zone', `Delete "${zone.name}"? This cannot be undone.`, [
+    Alert.alert('Delete Zone', `Delete "${zone.name}"?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => { await deleteZone(zone.id); loadStats(); } },
     ]);
@@ -47,66 +47,45 @@ export default function ManagerScreen() {
   const overallPct = totalStreets > 0 ? Math.round((totalDone / totalStreets) * 100) : 0;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Dashboard</Text>
-          <Text style={styles.subtitle}>Manager view</Text>
-        </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-          <Text style={styles.logoutText}>Sign out</Text>
+    <SafeAreaView style={s.root}>
+      <View style={s.header}>
+        <Text style={s.title}>Dashboard</Text>
+        <TouchableOpacity onPress={handleLogout}>
+          <Text style={s.logout}>Sign out</Text>
         </TouchableOpacity>
       </View>
 
       {!loading && stats.length > 0 && (
-        <View style={styles.overallCard}>
-          <View style={styles.overallStats}>
-            <View style={styles.overallStat}>
-              <Text style={styles.overallNum}>{stats.length}</Text>
-              <Text style={styles.overallLabel}>Zones</Text>
-            </View>
-            <View style={styles.overallDivider} />
-            <View style={styles.overallStat}>
-              <Text style={styles.overallNum}>{totalStreets}</Text>
-              <Text style={styles.overallLabel}>Streets</Text>
-            </View>
-            <View style={styles.overallDivider} />
-            <View style={styles.overallStat}>
-              <Text style={[styles.overallNum, { color: '#4ADE80' }]}>{totalDone}</Text>
-              <Text style={styles.overallLabel}>Done</Text>
-            </View>
-            <View style={styles.overallDivider} />
-            <View style={styles.overallStat}>
-              <Text style={[styles.overallNum, { color: '#60A5FA' }]}>{overallPct}%</Text>
-              <Text style={styles.overallLabel}>Complete</Text>
-            </View>
+        <View style={s.overallCard}>
+          <View style={s.overallRow}>
+            <Num label="Zones" value={stats.length} />
+            <Num label="Streets" value={totalStreets} />
+            <Num label="Done" value={totalDone} color="#4ADE80" />
+            <Num label="Overall" value={overallPct} color="#3B82F6" suffix="%" />
           </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${overallPct}%` as any }]} />
-          </View>
+          <View style={s.track}><View style={[s.fill, { width: `${overallPct}%` as any }]} /></View>
         </View>
       )}
 
-      <TouchableOpacity style={styles.createBtn} onPress={() => router.push('/manager/create-zone')}>
-        <Text style={styles.createBtnText}>+ Create New Zone</Text>
+      <TouchableOpacity style={s.createBtn} onPress={() => router.push('/manager/create-zone')} activeOpacity={0.8}>
+        <Text style={s.createBtnText}>+ New Zone</Text>
       </TouchableOpacity>
 
       {loading ? (
-        <View style={styles.center}><ActivityIndicator size="large" color="#3B82F6" /></View>
+        <View style={s.center}><ActivityIndicator color="#fff" /></View>
       ) : stats.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyIcon}>🗺️</Text>
-          <Text style={styles.emptyTitle}>No zones yet</Text>
-          <Text style={styles.emptySub}>Create a zone to get your workers started.</Text>
+        <View style={s.empty}>
+          <Text style={s.emptyIcon}>🗺️</Text>
+          <Text style={s.emptyTitle}>No zones yet</Text>
+          <Text style={s.emptySub}>Create a zone to get started.</Text>
         </View>
       ) : (
         <FlatList
           data={stats}
           keyExtractor={item => item.zone.id}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={s.list}
           renderItem={({ item }) => (
-            <ZoneCard
-              stats={item}
+            <ZoneCard stats={item}
               onView={() => router.push({ pathname: '/manager/zone-detail', params: { zoneId: item.zone.id } })}
               onDelete={() => handleDelete(item.zone)}
             />
@@ -120,111 +99,69 @@ export default function ManagerScreen() {
 function ZoneCard({ stats, onView, onDelete }: { stats: ZoneStats; onView: () => void; onDelete: () => void }) {
   const { zone, total, done } = stats;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-
   return (
-    <TouchableOpacity style={styles.card} onPress={onView} activeOpacity={0.8}>
-      <View style={styles.cardTop}>
-        <View style={styles.cardLeft}>
-          <Text style={styles.zoneName}>{zone.name}</Text>
-          <Text style={styles.zoneRadius}>{(zone.radiusMeters / 1000).toFixed(1)} km radius</Text>
+    <TouchableOpacity style={s.card} onPress={onView} activeOpacity={0.75}>
+      <View style={s.cardTop}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.zoneName}>{zone.name}</Text>
+          <Text style={s.zoneRadius}>{(zone.radiusMeters / 1000).toFixed(1)} km radius</Text>
         </View>
-        <View style={styles.cardRight}>
-          <View style={[styles.pctBadge, pct === 100 && styles.pctBadgeDone]}>
-            <Text style={[styles.pctText, pct === 100 && styles.pctTextDone]}>{pct}%</Text>
-          </View>
-        </View>
+        <Text style={[s.pct, pct === 100 && s.pctDone]}>{pct}%</Text>
       </View>
-
-      <View style={styles.cardStats}>
-        <Stat label="Total" value={total} />
-        <Stat label="Done" value={done} color="#4ADE80" />
-        <Stat label="Left" value={total - done} color="#FBBF24" />
+      <View style={s.cardStats}>
+        <Text style={s.stat}>{total} streets</Text>
+        <Text style={[s.stat, { color: '#4ADE80' }]}>{done} done</Text>
+        <Text style={[s.stat, { color: '#FBBF24' }]}>{total - done} left</Text>
       </View>
-
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${pct}%` as any }, pct === 100 && styles.progressFillDone]} />
+      <View style={s.track}>
+        <View style={[s.fill, { width: `${pct}%` as any }, pct === 100 && s.fillDone]} />
       </View>
-
-      <View style={styles.cardActions}>
-        <TouchableOpacity onPress={onView} style={styles.viewBtn}>
-          <Text style={styles.viewBtnText}>View Streets →</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onDelete} style={styles.deleteBtn}>
-          <Text style={styles.deleteBtnText}>Delete</Text>
-        </TouchableOpacity>
+      <View style={s.cardActions}>
+        <Text style={s.viewLink}>View Streets →</Text>
+        <TouchableOpacity onPress={onDelete}><Text style={s.deleteLink}>Delete</Text></TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
 }
 
-function Stat({ label, value, color = '#F1F5F9' }: { label: string; value: number; color?: string }) {
+function Num({ label, value, color = '#fff', suffix = '' }: { label: string; value: number; color?: string; suffix?: string }) {
   return (
-    <View style={styles.stat}>
-      <Text style={[styles.statNum, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={{ alignItems: 'center' }}>
+      <Text style={[s.numVal, { color }]}>{value}{suffix}</Text>
+      <Text style={s.numLabel}>{label}</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#000' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    padding: 20, borderBottomWidth: 1, borderBottomColor: '#1E293B',
-  },
-  title: { fontSize: 24, fontWeight: '800', color: '#F1F5F9' },
-  subtitle: { fontSize: 13, color: '#475569', marginTop: 2 },
-  logoutBtn: { padding: 8 },
-  logoutText: { color: '#EF4444', fontSize: 14, fontWeight: '600' },
-
-  overallCard: {
-    margin: 16, marginBottom: 0,
-    backgroundColor: '#1E293B', borderRadius: 16, padding: 16,
-    borderWidth: 1, borderColor: '#334155',
-  },
-  overallStats: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 14 },
-  overallStat: { alignItems: 'center' },
-  overallNum: { fontSize: 26, fontWeight: '800', color: '#F1F5F9' },
-  overallLabel: { fontSize: 11, color: '#475569', marginTop: 2 },
-  overallDivider: { width: 1, backgroundColor: '#334155' },
-
-  createBtn: {
-    margin: 16, marginBottom: 8,
-    backgroundColor: '#2563EB', borderRadius: 12,
-    padding: 14, alignItems: 'center',
-  },
-  createBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-
-  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  emptyIcon: { fontSize: 56, marginBottom: 12 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#F1F5F9', marginBottom: 6 },
-  emptySub: { fontSize: 14, color: '#475569', textAlign: 'center' },
-
-  list: { padding: 16, gap: 12 },
-  card: {
-    backgroundColor: '#1E293B', borderRadius: 14, padding: 16,
-    borderWidth: 1, borderColor: '#334155',
-  },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 },
-  cardLeft: { flex: 1 },
-  cardRight: {},
-  zoneName: { fontSize: 17, fontWeight: '700', color: '#F1F5F9' },
-  zoneRadius: { fontSize: 12, color: '#475569', marginTop: 2 },
-  pctBadge: { backgroundColor: '#172554', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
-  pctBadgeDone: { backgroundColor: '#14532D' },
-  pctText: { color: '#60A5FA', fontWeight: '700', fontSize: 15 },
-  pctTextDone: { color: '#4ADE80' },
-  cardStats: { flexDirection: 'row', gap: 24, marginBottom: 12 },
-  stat: {},
-  statNum: { fontSize: 20, fontWeight: '700' },
-  statLabel: { fontSize: 11, color: '#475569', marginTop: 1 },
-  progressTrack: { height: 4, backgroundColor: '#0F172A', borderRadius: 2, marginBottom: 14 },
-  progressFill: { height: 4, backgroundColor: '#3B82F6', borderRadius: 2 },
-  progressFillDone: { backgroundColor: '#4ADE80' },
-  cardActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  viewBtn: {},
-  viewBtnText: { color: '#3B82F6', fontWeight: '600', fontSize: 14 },
-  deleteBtn: {},
-  deleteBtnText: { color: '#EF4444', fontSize: 13 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20 },
+  title: { fontSize: 26, fontWeight: '800', color: '#fff' },
+  logout: { color: '#EF4444', fontSize: 14, fontWeight: '600' },
+  overallCard: { marginHorizontal: 16, marginBottom: 12, backgroundColor: '#111', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#1a1a1a' },
+  overallRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 14 },
+  numVal: { fontSize: 24, fontWeight: '800' },
+  numLabel: { fontSize: 11, color: '#444', marginTop: 2 },
+  track: { height: 3, backgroundColor: '#1a1a1a', borderRadius: 2 },
+  fill: { height: 3, backgroundColor: '#3B82F6', borderRadius: 2 },
+  fillDone: { backgroundColor: '#4ADE80' },
+  createBtn: { marginHorizontal: 16, marginBottom: 16, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center' },
+  createBtnText: { color: '#000', fontWeight: '800', fontSize: 15 },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyIcon: { fontSize: 48, marginBottom: 12 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#fff' },
+  emptySub: { fontSize: 13, color: '#444', marginTop: 4 },
+  list: { paddingHorizontal: 16, gap: 10, paddingBottom: 24 },
+  card: { backgroundColor: '#111', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#1a1a1a' },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
+  zoneName: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  zoneRadius: { fontSize: 12, color: '#444', marginTop: 2 },
+  pct: { fontSize: 22, fontWeight: '800', color: '#3B82F6' },
+  pctDone: { color: '#4ADE80' },
+  cardStats: { flexDirection: 'row', gap: 16, marginBottom: 10 },
+  stat: { fontSize: 13, color: '#555' },
+  cardActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
+  viewLink: { color: '#3B82F6', fontWeight: '600', fontSize: 13 },
+  deleteLink: { color: '#EF4444', fontSize: 13 },
 });
