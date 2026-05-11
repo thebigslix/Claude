@@ -132,7 +132,13 @@ export default function WorkerScreen() {
     }
     setDropping(true);
     try {
-      // Take photo first
+      const camPerm = await ImagePicker.requestCameraPermissionsAsync();
+      if (camPerm.status !== 'granted') {
+        Alert.alert('Camera permission needed', 'Please allow camera access in your device Settings to drop pins.');
+        setDropping(false);
+        return;
+      }
+
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.7,

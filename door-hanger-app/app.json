@@ -17,7 +17,10 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "StreetTracker uses your location to detect which street you are on.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "StreetTracker uses your location to track streets while you work."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "StreetTracker uses your location to track streets while you work.",
+        "NSCameraUsageDescription": "StreetTracker uses your camera to take proof photos when dropping pins.",
+        "NSPhotoLibraryUsageDescription": "StreetTracker saves door hanger proof photos to your library.",
+        "NSPhotoLibraryAddUsageDescription": "StreetTracker saves door hanger proof photos to your library."
       }
     },
     "android": {
@@ -25,7 +28,13 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -37,6 +46,13 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "StreetTracker uses your location to detect which street you are on."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "StreetTracker saves door hanger proof photos.",
+          "cameraPermission": "StreetTracker uses your camera to take proof photos when dropping pins."
         }
       ]
     ]
