@@ -1,35 +1,42 @@
-import { StyleSheet, View } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
-import { Street, Completion } from '../../lib/storage';
+import { StyleSheet, View, Text } from 'react-native';
+import MapView, { Marker, Polyline, PROVIDER_DEFAULT, MapPressEvent, LongPressEvent } from 'react-native-maps';
+import { Street, Completion, YardSign } from '../../lib/storage';
 
 type Props = {
   centerLat: number;
   centerLng: number;
   streets: Street[];
   completions: Completion[];
+  yardSigns: YardSign[];
   userLat?: number;
   userLng?: number;
   mapType: 'dark' | 'satellite';
+  placingSign: boolean;
   onStreetPress: (street: Street) => void;
+  onMapPress: (lat: number, lng: number) => void;
+  onYardSignPress: (sign: YardSign) => void;
 };
 
 export default function StreetMap({
-  centerLat, centerLng, streets, completions, userLat, userLng, mapType, onStreetPress,
+  centerLat, centerLng, streets, completions, yardSigns,
+  userLat, userLng, mapType, placingSign,
+  onStreetPress, onMapPress, onYardSignPress,
 }: Props) {
   const completedIds = new Set(completions.map(c => c.streetId));
+
+  function handlePress(e: MapPressEvent) {
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    onMapPress(latitude, longitude);
+  }
 
   return (
     <MapView
       style={StyleSheet.absoluteFill}
       provider={PROVIDER_DEFAULT}
       mapType={mapType === 'satellite' ? 'satellite' : 'standard'}
-      initialRegion={{
-        latitude: centerLat,
-        longitude: centerLng,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }}
+      initialRegion={{ latitude: centerLat, longitude: centerLng, latitudeDelta: 0.01, longitudeDelta: 0.01 }}
       showsUserLocation={false}
+      onPress={placingSign ? handlePress : undefined}
     >
       {streets.map(street => {
         if (!street.geometry || street.geometry.length < 2) return null;
@@ -41,10 +48,22 @@ export default function StreetMap({
             strokeColor={isDone ? '#4ADE80' : '#60A5FA'}
             strokeWidth={isDone ? 6 : 4}
             tappable
-            onPress={() => onStreetPress(street)}
+            onPress={() => !placingSign && onStreetPress(street)}
           />
         );
       })}
+
+      {yardSigns.map(sign => (
+        <Marker
+          key={sign.id}
+          coordinate={{ latitude: sign.lat, longitude: sign.lng }}
+          onPress={() => onYardSignPress(sign)}
+          anchor={{ x: 0.5, y: 1 }}
+        >
+          <Text style={styles.signEmoji}>🪧</Text>
+        </Marker>
+      ))}
+
       {userLat != null && userLng != null && (
         <Marker coordinate={{ latitude: userLat, longitude: userLng }} anchor={{ x: 0.5, y: 0.5 }}>
           <View style={styles.userDot} />
@@ -56,15 +75,10 @@ export default function StreetMap({
 
 const styles = StyleSheet.create({
   userDot: {
-    width: 16, height: 16,
-    backgroundColor: '#3B82F6',
-    borderRadius: 8,
-    borderWidth: 2.5,
-    borderColor: '#fff',
-    shadowColor: '#3B82F6',
-    shadowOpacity: 0.5,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 6,
+    width: 16, height: 16, backgroundColor: '#3B82F6',
+    borderRadius: 8, borderWidth: 2.5, borderColor: '#fff',
+    shadowColor: '#3B82F6', shadowOpacity: 0.5, shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 }, elevation: 6,
   },
+  signEmoji: { fontSize: 24 },
 });
