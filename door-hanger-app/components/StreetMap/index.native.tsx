@@ -41,8 +41,15 @@ export default function StreetMap({
       {streets.flatMap(street => {
         if (!street.geometry || street.geometry.length === 0) return [];
         const isDone = completedIds.has(street.id);
-        // Render each disconnected segment separately to avoid diagonal glitch lines
-        return street.geometry.map((segment, segIdx) => {
+        // Normalize: old data stored geometry as [number,number][] (flat).
+        // New format is [number,number][][] (array of segments). Detect by
+        // checking if the first element is a number pair or a segment array.
+        const segments: [number, number][][] =
+          typeof street.geometry[0][0] === 'number'
+            ? [street.geometry as unknown as [number, number][]]
+            : (street.geometry as unknown as [number, number][][]);
+
+        return segments.map((segment, segIdx) => {
           if (segment.length < 2) return null;
           return (
             <Polyline

@@ -91,9 +91,12 @@ export default function StreetMap({
     streets.forEach(street => {
       if (!street.geometry || street.geometry.length === 0) return;
       const isDone = completedIds.has(street.id);
-      // Passing an array of segments to L.polyline creates a multi-polyline
-      // — each segment draws independently with no connecting lines between them
-      const polyline = L.polyline(street.geometry, {
+      // Normalize old flat [number,number][] format to [[number,number][]] segments
+      const segments: [number, number][][] =
+        typeof street.geometry[0][0] === 'number'
+          ? [street.geometry as unknown as [number, number][]]
+          : (street.geometry as unknown as [number, number][][]);
+      const polyline = L.polyline(segments, {
         color: isDone ? '#4ADE80' : '#60A5FA',
         weight: isDone ? 5 : 3,
         opacity: isDone ? 1 : 0.75,
