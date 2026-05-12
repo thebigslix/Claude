@@ -67,9 +67,14 @@ export default function ManagerScreen() {
         </View>
       )}
 
-      <TouchableOpacity style={s.createBtn} onPress={() => router.push('/manager/create-zone')} activeOpacity={0.8}>
-        <Text style={s.createBtnText}>+ New Zone</Text>
-      </TouchableOpacity>
+      <View style={s.actionRow}>
+        <TouchableOpacity style={s.createBtn} onPress={() => router.push('/manager/create-zone')} activeOpacity={0.8}>
+          <Text style={s.createBtnText}>+ New Zone</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.workersBtn} onPress={() => router.push('/manager/workers')} activeOpacity={0.8}>
+          <Text style={s.workersBtnText}>👷 Workers</Text>
+        </TouchableOpacity>
+      </View>
 
       {loading ? (
         <View style={s.center}><ActivityIndicator color="#fff" /></View>
@@ -146,8 +151,11 @@ const s = StyleSheet.create({
   track: { height: 3, backgroundColor: '#1a1a1a', borderRadius: 2 },
   fill: { height: 3, backgroundColor: '#3B82F6', borderRadius: 2 },
   fillDone: { backgroundColor: '#4ADE80' },
-  createBtn: { marginHorizontal: 16, marginBottom: 16, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center' },
+  actionRow: { flexDirection: 'row', marginHorizontal: 16, marginBottom: 16, gap: 10 },
+  createBtn: { flex: 2, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center' },
   createBtnText: { color: '#000', fontWeight: '800', fontSize: 15 },
+  workersBtn: { flex: 1, backgroundColor: '#111', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#222' },
+  workersBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyIcon: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: '#fff' },

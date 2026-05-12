@@ -26,13 +26,16 @@ export default function LoginScreen() {
     }
     setSubmitting(true);
     try {
-      let worker = await findWorkerByNameAndPin(name.trim(), pin.trim());
+      const worker = await findWorkerByNameAndPin(name.trim(), pin.trim());
       if (!worker) {
-        worker = { id: `worker-${Date.now()}`, name: name.trim(), pin: pin.trim(), role: 'worker' };
-        await saveWorker(worker);
+        // Check if name exists with a different PIN (wrong PIN) vs brand new user
+        Alert.alert('Not found', 'No account with that name and PIN. Ask your manager to create your account.');
+        return;
       }
       await saveCurrentWorker(worker);
       router.replace(worker.role === 'manager' ? '/manager' : '/worker');
+    } catch (e) {
+      Alert.alert('Connection error', 'Could not reach the server. Check your internet connection.');
     } finally {
       setSubmitting(false);
     }
@@ -78,7 +81,7 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
-        <Text style={s.hint}>Manager: name <Text style={s.hintBold}>Manager</Text> · PIN <Text style={s.hintBold}>0000</Text></Text>
+        <Text style={s.hint}>New workers must be added by a manager first.</Text>
       </View>
     </KeyboardAvoidingView>
   );

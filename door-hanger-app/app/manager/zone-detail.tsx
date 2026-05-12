@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, SafeAreaView,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { getZones, getStreets, getCompletions, getYardSigns, getShifts, Zone, Street, Completion, YardSign, ShiftSession } from '../../lib/db';
+import { supabase } from '../../lib/supabase';
 
 export default function ZoneDetailScreen() {
   const { zoneId } = useLocalSearchParams<{ zoneId: string }>();
@@ -14,10 +15,49 @@ export default function ZoneDetailScreen() {
   const [yardSigns, setYardSigns] = useState<YardSign[]>([]);
   const [shifts, setShifts] = useState<ShiftSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [liveIndicator, setLiveIndicator] = useState(false);
   const [filter, setFilter] = useState<'all' | 'done' | 'pending'>('all');
   const [tab, setTab] = useState<'streets' | 'signs' | 'shifts'>('streets');
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useFocusEffect(useCallback(() => { load(); }, [zoneId]));
+
+  // Real-time subscription — updates whenever any worker marks a street or drops a pin
+  useEffect(() => {
+    if (!zoneId) return;
+    const channel = supabase
+      .channel(`zone-${zoneId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'completions' }, () => {
+        refreshLive();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'yard_signs' }, () => {
+        refreshLive();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, () => {
+        refreshLive();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [zoneId]);
+
+  async function refreshLive() {
+    // Flash the live indicator dot
+    setLiveIndicator(true);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setLiveIndicator(false), 1200);
+    // Refresh data silently (no loading spinner)
+    if (!zoneId) return;
+    const zones = await getZones();
+    const z = zones.find(z => z.id === zoneId) ?? null;
+    if (!z) return;
+    const [s, c, signs, allShifts] = await Promise.all([
+      getStreets(z.id), getCompletions(z.id), getYardSigns(z.id), getShifts(),
+    ]);
+    setStreets(s);
+    setCompletions(c);
+    setYardSigns(signs);
+    setShifts(allShifts.filter(sh => sh.zoneId === z.id));
+  }
 
   async function load() {
     setLoading(true);
@@ -57,7 +97,10 @@ export default function ZoneDetailScreen() {
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()}><Text style={s.back}>← Back</Text></TouchableOpacity>
         <Text style={s.title} numberOfLines={1}>{zone?.name ?? 'Zone'}</Text>
-        <View style={{ width: 60 }} />
+        <View style={s.liveWrap}>
+          <View style={[s.liveDot, liveIndicator && s.liveDotActive]} />
+          <Text style={s.liveText}>live</Text>
+        </View>
       </View>
 
       {loading ? (
@@ -176,6 +219,10 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#111' },
   back: { color: '#3B82F6', fontSize: 15, width: 60 },
   title: { fontSize: 17, fontWeight: '700', color: '#fff', flex: 1, textAlign: 'center' },
+  liveWrap: { flexDirection: 'row', alignItems: 'center', gap: 5, width: 60, justifyContent: 'flex-end' },
+  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#333' },
+  liveDotActive: { backgroundColor: '#4ADE80' },
+  liveText: { fontSize: 11, color: '#444', fontWeight: '600' },
   summary: { margin: 16, backgroundColor: '#111', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#1a1a1a' },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 },
   summaryExtra: { fontSize: 12, color: '#444', textAlign: 'center', marginBottom: 12 },
