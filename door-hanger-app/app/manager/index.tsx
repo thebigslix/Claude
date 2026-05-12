@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  ActivityIndicator, Alert, SafeAreaView,
+  ActivityIndicator, SafeAreaView,
 } from 'react-native';
+import { confirmDestructive } from '../../lib/confirm';
 import { router, useFocusEffect } from 'expo-router';
 import {
   getCurrentWorker, getZones, getStreets, getCompletions,
@@ -31,10 +32,10 @@ export default function ManagerScreen() {
   }
 
   async function handleDelete(zone: Zone) {
-    Alert.alert('Delete Zone', `Delete "${zone.name}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => { await deleteZone(zone.id); loadStats(); } },
-    ]);
+    confirmDestructive('Delete Zone', `Delete "${zone.name}"? This cannot be undone.`, 'Delete', async () => {
+      await deleteZone(zone.id);
+      loadStats();
+    });
   }
 
   async function handleLogout() {

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  Alert, ActivityIndicator, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView,
+  ActivityIndicator, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
+import { alertMsg } from '../../lib/confirm';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import { saveZone, saveStreets } from '../../lib/storage';
@@ -36,7 +37,7 @@ export default function CreateZoneScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Location permission is required.');
+        alertMsg('Permission needed', 'Location permission is required.');
         return;
       }
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
@@ -45,7 +46,7 @@ export default function CreateZoneScreen() {
       setHasSetLocation(true);
       setStreetCount(null);
     } catch {
-      Alert.alert('Error', 'Could not get location.');
+      alertMsg('Error', 'Could not get location.');
     } finally {
       setDetecting(false);
     }
@@ -60,7 +61,7 @@ export default function CreateZoneScreen() {
 
   async function previewStreets() {
     if (!hasSetLocation) {
-      Alert.alert('Set a location first', 'Tap on the map or use "My Location" to set the zone center.');
+      alertMsg('Set a location first', 'Tap on the map or use "My Location" to set the zone center.');
       return;
     }
     setFetching(true);
@@ -69,15 +70,15 @@ export default function CreateZoneScreen() {
       const streets = await fetchStreetsInRadius(lat, lng, radius, 'preview');
       setStreetCount(streets.length);
     } catch {
-      Alert.alert('Error', 'Could not load streets. Check your connection.');
+      alertMsg('Error', 'Could not load streets. Check your connection.');
     } finally {
       setFetching(false);
     }
   }
 
   async function handleCreate() {
-    if (!name.trim()) { Alert.alert('Name required', 'Give this zone a name.'); return; }
-    if (!hasSetLocation) { Alert.alert('Location required', 'Tap the map or use "My Location".'); return; }
+    if (!name.trim()) { alertMsg('Name required', 'Give this zone a name.'); return; }
+    if (!hasSetLocation) { alertMsg('Location required', 'Tap the map or use "My Location".'); return; }
 
     setSaving(true);
     try {
@@ -94,7 +95,7 @@ export default function CreateZoneScreen() {
       const streets = await fetchStreetsInRadius(lat, lng, radius, zoneId);
 
       if (streets.length === 0) {
-        Alert.alert('No streets found', 'No named streets in this area. Try a larger radius or different location.');
+        alertMsg('No streets found', 'No named streets in this area. Try a larger radius or different location.');
         setSaving(false);
         return;
       }
@@ -102,13 +103,9 @@ export default function CreateZoneScreen() {
       await saveZone(zone);
       await saveStreets(streets);
 
-      Alert.alert(
-        'Zone created!',
-        `"${name}" has ${streets.length} streets to cover.`,
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
+      alertMsg('Zone created!', `"${name}" has ${streets.length} streets to cover.`, () => router.back());
     } catch {
-      Alert.alert('Error', 'Failed to create zone. Check your internet connection.');
+      alertMsg('Error', 'Failed to create zone. Check your internet connection.');
     } finally {
       setSaving(false);
     }

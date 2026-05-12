@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   ActivityIndicator, Animated, Modal, TextInput,
-  KeyboardAvoidingView, Platform, StatusBar, Image, Alert,
+  KeyboardAvoidingView, Platform, StatusBar, Image,
 } from 'react-native';
+import { confirmDestructive } from '../../lib/confirm';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -131,19 +132,14 @@ export default function WorkerScreen() {
   }
 
   async function handleEndShift() {
-    Alert.alert('End Shift', 'Are you sure you want to clock out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'End Shift', style: 'destructive', onPress: async () => {
-          if (shiftTimer.current) clearInterval(shiftTimer.current);
-          const lat = userLat ?? selectedZone?.centerLat ?? 0;
-          const lng = userLng ?? selectedZone?.centerLng ?? 0;
-          await endShift(lat, lng);
-          setActiveShift(null);
-          setShiftSeconds(0);
-        },
-      },
-    ]);
+    confirmDestructive('End Shift', 'Are you sure you want to clock out?', 'End Shift', async () => {
+      if (shiftTimer.current) clearInterval(shiftTimer.current);
+      const lat = userLat ?? selectedZone?.centerLat ?? 0;
+      const lng = userLng ?? selectedZone?.centerLng ?? 0;
+      await endShift(lat, lng);
+      setActiveShift(null);
+      setShiftSeconds(0);
+    });
   }
 
   function formatTime(secs: number) {
@@ -243,16 +239,11 @@ export default function WorkerScreen() {
   }
 
   async function handleDeleteSign(sign: YardSign) {
-    Alert.alert('Remove Sign', 'Remove this yard sign pin?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove', style: 'destructive', onPress: async () => {
-          await deleteYardSign(sign.id);
-          setYardSigns(await getYardSigns(selectedZone!.id));
-          setViewSignModal(null);
-        },
-      },
-    ]);
+    confirmDestructive('Remove Sign', 'Remove this yard sign pin?', 'Remove', async () => {
+      await deleteYardSign(sign.id);
+      setYardSigns(await getYardSigns(selectedZone!.id));
+      setViewSignModal(null);
+    });
   }
 
   // ── Sheet ────────────────────────────────────────────
