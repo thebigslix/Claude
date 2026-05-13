@@ -23,10 +23,33 @@ type MapMode = 'navigate' | 'placeSign';
 type MapType = 'dark' | 'satellite';
 type SheetTab = 'streets' | 'signs';
 
+// Web-compatible image picker using file input
+function pickImageWeb(useCamera: boolean): Promise<string | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    if (useCamera) input.setAttribute('capture', 'environment');
+    let resolved = false;
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) { resolve(null); return; }
+      const reader = new FileReader();
+      reader.onload = () => { resolved = true; resolve(reader.result as string); };
+      reader.readAsDataURL(file);
+    };
+    // Some browsers fire focus instead of cancel
+    window.addEventListener('focus', function onFocus() {
+      window.removeEventListener('focus', onFocus);
+      setTimeout(() => { if (!resolved) resolve(null); }, 500);
+    }, { once: true });
+    input.click();
+  });
+}
+
 export default function WorkerScreen() {
   const insets = useSafeAreaInsets();
 
-  // Core state
   const [worker, setWorker] = useState<Worker | null>(null);
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
@@ -34,27 +57,22 @@ export default function WorkerScreen() {
   const [completions, setCompletions] = useState<Completion[]>([]);
   const [yardSigns, setYardSigns] = useState<YardSign[]>([]);
 
-  // Location
   const [currentStreet, setCurrentStreet] = useState<string | null>(null);
   const [userLat, setUserLat] = useState<number | undefined>();
   const [userLng, setUserLng] = useState<number | undefined>();
   const locationSub = useRef<Location.LocationSubscription | null>(null);
 
-  // Map UI
   const [mapType, setMapType] = useState<MapType>('dark');
   const [mapMode, setMapMode] = useState<MapMode>('navigate');
 
-  // Shift
   const [activeShift, setActiveShift] = useState<ShiftSession | null>(null);
   const [shiftSeconds, setShiftSeconds] = useState(0);
   const shiftTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Sheet
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetTab, setSheetTab] = useState<SheetTab>('streets');
   const sheetAnim = useRef(new Animated.Value(0)).current;
 
-  // Modals
   const [completeModal, setCompleteModal] = useState<Street | null>(null);
   const [editModal, setEditModal] = useState<{ street: Street; comp: Completion } | null>(null);
   const [signModal, setSignModal] = useState<{ lat: number; lng: number } | null>(null);
@@ -64,7 +82,7 @@ export default function WorkerScreen() {
   const [signPhoto, setSignPhoto] = useState<string | null>(null);
 
   useEffect(() => {
-    StatusBar.setBarStyle('light-content');
+    if (Platform.OS !== 'web') StatusBar.setBarStyle('light-content');
     load();
     return () => {
       locationSub.current?.remove();
@@ -111,7 +129,6 @@ export default function WorkerScreen() {
     );
   }
 
-  // ── Shift ────────────────────────────────────────────
   function startShiftTimer(shift: ShiftSession) {
     if (shiftTimer.current) clearInterval(shiftTimer.current);
     const tick = () => {
@@ -151,7 +168,6 @@ export default function WorkerScreen() {
       : `${m}:${String(s).padStart(2, '0')}`;
   }
 
-  // ── Street completion ────────────────────────────────
   function handleStreetPress(street: Street) {
     if (!worker) return;
     const comp = completions.find(c => c.streetId === street.id);
@@ -192,7 +208,6 @@ export default function WorkerScreen() {
     setEditModal(null);
   }
 
-  // ── Yard signs ───────────────────────────────────────
   function handleMapPress(lat: number, lng: number) {
     if (mapMode !== 'placeSign') return;
     setSignPhoto(null);
@@ -201,23 +216,29 @@ export default function WorkerScreen() {
   }
 
   async function pickSignPhoto() {
+    if (Platform.OS === 'web') {
+      const uri = await pickImageWeb(true);
+      if (uri) setSignPhoto(uri);
+      return;
+    }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'] as any,
       quality: 0.7,
     });
-    if (!result.canceled && result.assets[0]) {
-      setSignPhoto(result.assets[0].uri);
-    }
+    if (!result.canceled && result.assets[0]) setSignPhoto(result.assets[0].uri);
   }
 
   async function pickSignPhotoFromLibrary() {
+    if (Platform.OS === 'web') {
+      const uri = await pickImageWeb(false);
+      if (uri) setSignPhoto(uri);
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'] as any,
       quality: 0.7,
     });
-    if (!result.canceled && result.assets[0]) {
-      setSignPhoto(result.assets[0].uri);
-    }
+    if (!result.canceled && result.assets[0]) setSignPhoto(result.assets[0].uri);
   }
 
   async function handleSaveSign() {
@@ -246,7 +267,6 @@ export default function WorkerScreen() {
     });
   }
 
-  // ── Sheet ────────────────────────────────────────────
   function toggleSheet() {
     const toValue = sheetOpen ? 0 : 1;
     setSheetOpen(!sheetOpen);
@@ -269,13 +289,18 @@ export default function WorkerScreen() {
 
   const SHEET_HEIGHT = 340;
 
+  // Safe area for top bar — on web use env() fallback via insets
+  const topPad = insets.top || (Platform.OS === 'web' ? 44 : 0);
+
   if (!worker) {
     return <View style={styles.loading}><ActivityIndicator size="large" color="#3B82F6" /></View>;
   }
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      {Platform.OS !== 'web' && (
+        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      )}
 
       {/* MAP */}
       {selectedZone ? (
@@ -301,8 +326,8 @@ export default function WorkerScreen() {
         </View>
       )}
 
-      {/* ── TOP BAR ── */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+      {/* TOP BAR */}
+      <View style={[styles.topBar, { paddingTop: topPad + 8 }]}>
         <View style={styles.topLeft}>
           <Text style={styles.topName}>{worker.name}</Text>
           {selectedZone && <Text style={styles.topZone} numberOfLines={1}>{selectedZone.name}</Text>}
@@ -319,9 +344,9 @@ export default function WorkerScreen() {
         </View>
       </View>
 
-      {/* ── SHIFT TIMER BAR ── */}
+      {/* SHIFT TIMER BAR */}
       {selectedZone && (
-        <View style={[styles.shiftBar, { top: insets.top + 60 }]}>
+        <View style={[styles.shiftBar, { top: topPad + 60 }]}>
           {activeShift ? (
             <>
               <View style={styles.shiftActive}>
@@ -343,7 +368,7 @@ export default function WorkerScreen() {
 
       {/* Zone tabs */}
       {zones.length > 1 && (
-        <View style={[styles.zoneTabsWrap, { top: insets.top + 100 }]}>
+        <View style={[styles.zoneTabsWrap, { top: topPad + 100 }]}>
           {zones.map(z => (
             <TouchableOpacity
               key={z.id}
@@ -389,7 +414,7 @@ export default function WorkerScreen() {
         </TouchableOpacity>
       )}
 
-      {/* ── BOTTOM SHEET ── */}
+      {/* BOTTOM SHEET */}
       {selectedZone && (
         <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
           <TouchableOpacity style={styles.sheetHandle} onPress={toggleSheet} activeOpacity={0.9}>
@@ -416,7 +441,6 @@ export default function WorkerScreen() {
           <Animated.View style={[styles.sheetContent, {
             maxHeight: sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0, SHEET_HEIGHT] }),
           }]}>
-            {/* Tabs */}
             <View style={styles.tabs}>
               <TouchableOpacity style={[styles.tab, sheetTab === 'streets' && styles.tabActive]} onPress={() => setSheetTab('streets')}>
                 <Text style={[styles.tabText, sheetTab === 'streets' && styles.tabTextActive]}>Streets ({streets.length})</Text>
@@ -501,10 +525,15 @@ export default function WorkerScreen() {
         </View>
       )}
 
-      {/* ── MARK DONE MODAL ── */}
+      {/* MARK DONE MODAL */}
       <Modal visible={!!completeModal} transparent animationType="slide" statusBarTranslucent>
-        <KeyboardAvoidingView style={styles.modalBg} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
+        <KeyboardAvoidingView
+          style={styles.modalBg}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
+          <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setCompleteModal(null)} />
+          <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom, 16) + 16 }]}>
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>{completeModal?.name}</Text>
             <Text style={styles.modalSub}>Mark this street as complete</Text>
@@ -543,10 +572,11 @@ export default function WorkerScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ── EDIT DONE STREET MODAL ── */}
+      {/* EDIT DONE STREET MODAL */}
       <Modal visible={!!editModal} transparent animationType="slide" statusBarTranslucent>
         <KeyboardAvoidingView style={styles.modalBg} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
+          <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setEditModal(null)} />
+          <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom, 16) + 16 }]}>
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>{editModal?.street.name}</Text>
             <Text style={styles.modalSub}>Edit details for this street</Text>
@@ -588,10 +618,11 @@ export default function WorkerScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ── PLACE SIGN MODAL ── */}
+      {/* PLACE SIGN MODAL */}
       <Modal visible={!!signModal} transparent animationType="slide" statusBarTranslucent>
         <View style={styles.modalBg}>
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
+          <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => { setSignModal(null); setSignPhoto(null); }} />
+          <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom, 16) + 16 }]}>
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>Place Yard Sign 🪧</Text>
             <Text style={styles.modalSub}>Attach a photo of the sign you placed</Text>
@@ -623,10 +654,11 @@ export default function WorkerScreen() {
         </View>
       </Modal>
 
-      {/* ── VIEW SIGN MODAL ── */}
+      {/* VIEW SIGN MODAL */}
       <Modal visible={!!viewSignModal} transparent animationType="slide" statusBarTranslucent>
         <View style={styles.modalBg}>
-          <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
+          <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setViewSignModal(null)} />
+          <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom, 16) + 16 }]}>
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>Yard Sign 🪧</Text>
             <Text style={styles.modalSub}>
@@ -663,7 +695,6 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontWeight: '700', color: '#F1F5F9' },
   emptySub: { fontSize: 14, color: '#475569', marginTop: 6 },
 
-  // TOP BAR
   topBar: {
     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
     flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between',
@@ -678,7 +709,6 @@ const styles = StyleSheet.create({
   exitBtn: { backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)' },
   exitText: { color: '#EF4444', fontSize: 12, fontWeight: '700' },
 
-  // SHIFT BAR
   shiftBar: {
     position: 'absolute', left: 14, right: 14, zIndex: 25,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -695,14 +725,12 @@ const styles = StyleSheet.create({
   shiftStartBtn: { flex: 1, alignItems: 'center' },
   shiftStartText: { color: '#60A5FA', fontSize: 14, fontWeight: '700' },
 
-  // ZONE TABS
   zoneTabsWrap: { position: 'absolute', left: 14, right: 14, zIndex: 25, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   zoneTab: { backgroundColor: 'rgba(15,23,42,0.85)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: '#334155' },
   zoneTabActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
   zoneTabText: { fontSize: 12, color: '#64748B', fontWeight: '600' },
   zoneTabTextActive: { color: '#fff' },
 
-  // CURRENT PILL
   currentPill: { position: 'absolute', bottom: 130, left: 14, right: 60, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15,23,42,0.92)', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#334155', zIndex: 20, gap: 10 },
   pillActive: { borderColor: '#2563EB' },
   pillDone: { borderColor: '#16A34A' },
@@ -716,13 +744,11 @@ const styles = StyleSheet.create({
   tapBadge: { backgroundColor: '#172554', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   tapBadgeText: { color: '#60A5FA', fontSize: 11, fontWeight: '700' },
 
-  // FAB
   fab: { position: 'absolute', bottom: 130, right: 14, zIndex: 20, backgroundColor: 'rgba(15,23,42,0.92)', borderRadius: 14, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: '#334155', minWidth: 52 },
   fabActive: { backgroundColor: '#1E3A5F', borderColor: '#2563EB' },
   fabIcon: { fontSize: 22 },
   fabLabel: { fontSize: 9, color: '#94A3B8', fontWeight: '700', marginTop: 2 },
 
-  // BOTTOM SHEET
   sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20, backgroundColor: '#1E293B', borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1, borderColor: '#334155', overflow: 'hidden' },
   sheetHandle: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10 },
   handleBar: { width: 32, height: 3, backgroundColor: '#334155', borderRadius: 2, alignSelf: 'center', marginBottom: 10 },
@@ -774,8 +800,8 @@ const styles = StyleSheet.create({
   signsEmptyText: { fontSize: 14, color: '#475569', fontWeight: '600' },
   signsEmptyHint: { fontSize: 12, color: '#334155', marginTop: 4 },
 
-  // MODALS
-  modalBg: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.75)' },
+  modalBg: { flex: 1, justifyContent: 'flex-end' },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.75)' },
   modalCard: { backgroundColor: '#1E293B', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderTopWidth: 1, borderColor: '#334155' },
   modalHandle: { width: 32, height: 3, backgroundColor: '#334155', borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
   modalTitle: { fontSize: 17, fontWeight: '700', color: '#F1F5F9', marginBottom: 4 },

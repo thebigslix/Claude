@@ -81,28 +81,38 @@ export default function StreetMap({
 
     map.addSource('streets', { type: 'geojson', data });
 
-    // Wide invisible hit area for easier tapping
+    // Wide invisible hit area for easy tapping on mobile
     map.addLayer({
       id: 'streets-hit',
       type: 'line',
       source: 'streets',
-      paint: { 'line-color': 'rgba(0,0,0,0)', 'line-width': 16 },
+      paint: { 'line-color': 'rgba(0,0,0,0)', 'line-width': 20 },
+    });
+    // Pending streets — blue glow
+    map.addLayer({
+      id: 'streets-pending-glow',
+      type: 'line',
+      source: 'streets',
+      filter: ['==', ['get', 'done'], false],
+      paint: { 'line-color': '#3B82F6', 'line-width': 8, 'line-opacity': 0.2, 'line-blur': 4 },
     });
     map.addLayer({
       id: 'streets-pending',
       type: 'line',
       source: 'streets',
       filter: ['==', ['get', 'done'], false],
-      paint: { 'line-color': '#60A5FA', 'line-width': 4, 'line-opacity': 0.85 },
+      paint: { 'line-color': '#60A5FA', 'line-width': 3.5, 'line-opacity': 0.95 },
     });
+    // Done streets — green
     map.addLayer({
       id: 'streets-done',
       type: 'line',
       source: 'streets',
       filter: ['==', ['get', 'done'], true],
-      paint: { 'line-color': '#4ADE80', 'line-width': 6, 'line-opacity': 1 },
+      paint: { 'line-color': '#4ADE80', 'line-width': 5, 'line-opacity': 1 },
     });
 
+    // Street name popup on hover (desktop)
     const popup = new ml.Popup({
       closeButton: false,
       closeOnClick: false,
@@ -122,7 +132,7 @@ export default function StreetMap({
     });
   }
 
-  // Init map (re-runs only if center changes)
+  // Init map
   useEffect(() => {
     if (!containerRef.current) return;
     let cancelled = false;
@@ -137,15 +147,18 @@ export default function StreetMap({
         center: [centerLng, centerLat],
         zoom: 15,
         attributionControl: true,
+        // Smoother zoom on mobile
+        touchZoomRotate: true,
+        cooperativeGestures: false,
       });
       mapRef.current = map;
 
       map.addControl(new ml.NavigationControl({ showCompass: false }), 'bottom-right');
 
-      // Re-add sources/layers after every style load (including style switches)
+      // Re-add layers after every style load (style switches wipe them)
       map.on('style.load', () => addDataLayers(map, ml));
 
-      // Single click handler: street tap or map tap
+      // Unified tap/click: street or map press
       map.on('click', (e: any) => {
         const features = map.queryRenderedFeatures(e.point, { layers: ['streets-hit'] });
         if (features.length) {
@@ -166,7 +179,7 @@ export default function StreetMap({
     };
   }, [centerLat, centerLng]);
 
-  // Switch between dark and satellite
+  // Style switching
   useEffect(() => {
     if (!mapRef.current) return;
     mapRef.current.setStyle(mapType === 'satellite' ? SATELLITE_STYLE : DARK_STYLE);
@@ -182,7 +195,7 @@ export default function StreetMap({
     src.setData(buildStreetsGeoJSON(streets, completedIds));
   }, [streets, completions]);
 
-  // Crosshair cursor when placing a sign
+  // Crosshair when placing a sign
   useEffect(() => {
     if (!mapRef.current) return;
     mapRef.current.getCanvas().style.cursor = placingSign ? 'crosshair' : '';
@@ -202,7 +215,7 @@ export default function StreetMap({
     yardSigns.forEach(sign => {
       if (signMarkersRef.current.has(sign.id)) return;
       const el = document.createElement('div');
-      el.style.cssText = 'font-size:22px;cursor:pointer;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.6));line-height:1;user-select:none;';
+      el.style.cssText = 'font-size:24px;cursor:pointer;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.6));line-height:1;user-select:none;';
       el.textContent = '🪧';
       el.addEventListener('click', (e) => { e.stopPropagation(); onYardSignPressRef.current(sign); });
       const marker = new ml.Marker({ element: el, anchor: 'bottom' })
@@ -212,7 +225,7 @@ export default function StreetMap({
     });
   }, [yardSigns]);
 
-  // User location dot
+  // User location dot with pulsing ring
   useEffect(() => {
     const map = mapRef.current;
     const ml = mlRef.current;
@@ -222,7 +235,11 @@ export default function StreetMap({
       userMarkerRef.current.setLngLat([userLng, userLat]);
     } else {
       const el = document.createElement('div');
-      el.style.cssText = 'width:16px;height:16px;background:#3B82F6;border:2.5px solid #fff;border-radius:50%;box-shadow:0 0 0 4px rgba(59,130,246,0.3),0 2px 6px rgba(0,0,0,0.4);';
+      el.style.cssText = [
+        'width:18px', 'height:18px', 'background:#3B82F6',
+        'border:2.5px solid #fff', 'border-radius:50%',
+        'box-shadow:0 0 0 5px rgba(59,130,246,0.25),0 2px 8px rgba(0,0,0,0.4)',
+      ].join(';');
       userMarkerRef.current = new ml.Marker({ element: el, anchor: 'center' })
         .setLngLat([userLng, userLat])
         .addTo(map);
@@ -239,7 +256,7 @@ export default function StreetMap({
           border: 1px solid #334155;
           border-radius: 6px;
           font-size: 12px;
-          padding: 4px 8px;
+          padding: 4px 10px;
           font-weight: 600;
           box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         }
@@ -248,6 +265,8 @@ export default function StreetMap({
         .maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(0.7); }
         .maplibregl-ctrl-attrib { background: rgba(15,23,42,0.6) !important; }
         .maplibregl-ctrl-attrib a { color: #64748B !important; }
+        /* Smooth pinch-zoom on iOS */
+        .maplibregl-canvas { touch-action: none; }
       `}</style>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
     </>

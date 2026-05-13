@@ -24,12 +24,14 @@ function circleGeoJSON(lat: number, lng: number, radiusMeters: number) {
   };
 }
 
+// Liberty style: clean light vector map closest to Apple Maps look
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+
 export default function ZonePicker({ lat, lng, radiusMeters, onMove }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
 
-  // Refs so handlers always see current values
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
   const radiusRef = useRef(radiusMeters);
@@ -53,21 +55,30 @@ export default function ZonePicker({ lat, lng, radiusMeters, onMove }: Props) {
 
       const map = new ml.Map({
         container: containerRef.current,
-        style: 'https://tiles.openfreemap.org/styles/dark',
+        style: MAP_STYLE,
         center: [lng, lat],
         zoom: 14,
+        attributionControl: true,
       });
       mapRef.current = map;
 
       map.on('style.load', () => {
         map.addSource('zone-circle', { type: 'geojson', data: circleGeoJSON(latRef.current, lngRef.current, radiusRef.current) });
-        map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zone-circle', paint: { 'fill-color': '#3B82F6', 'fill-opacity': 0.12 } });
-        map.addLayer({ id: 'zone-outline', type: 'line', source: 'zone-circle', paint: { 'line-color': '#3B82F6', 'line-width': 2 } });
+        map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zone-circle', paint: { 'fill-color': '#2563EB', 'fill-opacity': 0.12 } });
+        map.addLayer({ id: 'zone-outline', type: 'line', source: 'zone-circle', paint: { 'line-color': '#2563EB', 'line-width': 2.5, 'line-dasharray': [3, 2] } });
       });
 
       // Draggable center marker
       const el = document.createElement('div');
-      el.style.cssText = 'width:22px;height:22px;background:#3B82F6;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.5);cursor:grab;';
+      el.style.cssText = [
+        'width:24px', 'height:24px', 'background:#2563EB',
+        'border:3px solid #fff', 'border-radius:50%',
+        'box-shadow:0 2px 12px rgba(37,99,235,0.5),0 1px 4px rgba(0,0,0,0.3)',
+        'cursor:grab', 'transition:transform 0.1s',
+      ].join(';');
+      el.addEventListener('mousedown', () => { el.style.cursor = 'grabbing'; el.style.transform = 'scale(1.15)'; });
+      el.addEventListener('mouseup', () => { el.style.cursor = 'grab'; el.style.transform = ''; });
+
       const marker = new ml.Marker({ element: el, anchor: 'center', draggable: true })
         .setLngLat([lng, lat])
         .addTo(map);
@@ -95,7 +106,7 @@ export default function ZonePicker({ lat, lng, radiusMeters, onMove }: Props) {
     };
   }, []);
 
-  // Sync marker + circle when lat/lng pushed from outside (e.g. "My Location")
+  // Sync when lat/lng pushed from outside (e.g. "My Location")
   useEffect(() => {
     if (!mapRef.current || !markerRef.current) return;
     markerRef.current.setLngLat([lng, lat]);
@@ -110,5 +121,13 @@ export default function ZonePicker({ lat, lng, radiusMeters, onMove }: Props) {
     updateCircle(mapRef.current, pos.lat, pos.lng);
   }, [radiusMeters]);
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
+  return (
+    <>
+      <style>{`
+        .maplibregl-ctrl-attrib { background: rgba(255,255,255,0.8) !important; }
+        .maplibregl-ctrl-attrib a { color: #94A3B8 !important; }
+      `}</style>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+    </>
+  );
 }

@@ -29,7 +29,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "bundler": "metro"
+      "bundler": "metro",
+      "name": "StreetTracker",
+      "shortName": "StreetTracker",
+      "description": "Field door-hanger route tracking",
+      "backgroundColor": "#0F172A",
+      "themeColor": "#1E293B",
+      "display": "standalone",
+      "orientation": "portrait",
+      "startUrl": "/"
     },
     "plugins": [
       "expo-router",
